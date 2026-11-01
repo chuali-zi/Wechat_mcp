@@ -108,9 +108,11 @@ async function imageData(runtime: Runtime, body: string, accountDir: string, sig
     if (!decoded) return { availability: 'decode_failed', reason: 'unsupported_image_data' }
     data = decoded
   }
+  if (data.subarray(0, 4).toString('ascii') === 'wxgf') return { availability: 'decode_failed', reason: 'unsupported_wxgf_image' }
   let mime = data.subarray(0, 3).toString('hex') === 'ffd8ff' ? 'image/jpeg'
     : data.toString('ascii', 1, 4) === 'PNG' ? 'image/png'
-      : data.toString('ascii', 8, 12) === 'WEBP' ? 'image/webp' : data.toString('ascii', 0, 3) === 'GIF' ? 'image/gif' : data.toString('ascii', 0, 2) === 'BM' ? 'image/bmp' : isHeic(data) ? 'image/heic' : 'image/jpeg'
+      : data.toString('ascii', 8, 12) === 'WEBP' ? 'image/webp' : data.toString('ascii', 0, 3) === 'GIF' ? 'image/gif' : data.toString('ascii', 0, 2) === 'BM' ? 'image/bmp' : isHeic(data) ? 'image/heic' : ''
+  if (!mime) return { availability: 'decode_failed', reason: 'unsupported_image_data' }
   let transformed = false
   if (isHeic(data)) {
     try {

@@ -74,6 +74,14 @@ test('XOR, V1 and V2 synthetic DAT: cache paths, inline, malformed headers and m
         assert.equal((await readMedia(runtime, id, { representation: 'file' })).data.availability, 'decode_failed')
       }
     }
+    // WeChat media can contain a wxgf payload, which sharp cannot
+    // decode. Do not claim it is a JPEG or return an unusable cached file.
+    const wxgf = Buffer.concat([Buffer.from('wxgf'), Buffer.alloc(60, 7)])
+    await writeFile(path, dat(wxgf, 2, Buffer.from('0123456789abcdef'), 0x53))
+    const unsupported = await readMedia(runtime, id, { representation: 'file' })
+    assert.equal(unsupported.data.availability, 'decode_failed')
+    assert.equal(unsupported.data.reason, 'unsupported_wxgf_image')
+    assert.equal(unsupported.data.local_path, undefined)
     await writeFile(path, dat(image, 0, Buffer.alloc(16), 0x53))
     const tools = createTools(runtime as any)
     const fetched = await tools.call('get_attachment', { attachment_id: `att:${id}`, inline_image: true })
