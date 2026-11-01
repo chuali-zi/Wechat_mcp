@@ -19,6 +19,7 @@
     "build:mcp": "npm run typecheck:mcp && node scripts/build-mcp.cjs",
     "typecheck:mcp": "tsc --noEmit -p tsconfig.mcp.json",
     "test:mcp": "node scripts/test-mcp.cjs",
+    "test:qq": "node scripts/test-qq.cjs",
     "fuzz:mcp": "npm run build:mcp && node scripts/fuzz-mcp.cjs",
     "check:mcp": "node scripts/check-mcp.cjs",
     "check:mcp-setup": "npm run build:mcp && node scripts/check-mcp-setup.cjs",
