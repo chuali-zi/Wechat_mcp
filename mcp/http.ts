@@ -91,11 +91,19 @@ async function cloudflared(profile: string) {
 }
 
 export async function runRemote(args: string[], parse: (args: string[]) => RuntimeOptions) {
+  if (args.includes('--share')) {
+    if (!args.includes('--i-understand-public-exposure')) {
+      const message = '危险：--share 不推荐使用；必须同时传入 --i-understand-public-exposure。任何持有 URL 和令牌的人都能读取所有可访问的微信 / QQ 聊天。请优先通过远程 shell 调用本机 stdio MCP。'
+      process.stderr.write(message + '\n')
+      throw new Error(message)
+    }
+    process.stderr.write('⚠️ 危险：正在启用公网分享（不推荐，仅限最后手段）。任何持有 URL 和令牌的人都能读取所有可访问的微信 / QQ 聊天。可运行本机命令的云端 Agent 禁止使用此模式，应通过远程 shell 调用本机 stdio MCP。\n')
+  }
   const remaining: string[] = []
   let portValue = process.env.WEFLOW_MCP_PORT || '8765'
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--port') { portValue = args[++i]; continue }
-    if (!['--http', '--share', '--rotate-token'].includes(args[i])) remaining.push(args[i])
+    if (!['--http', '--share', '--rotate-token', '--i-understand-public-exposure'].includes(args[i])) remaining.push(args[i])
   }
   const port = Number(portValue)
   if (!/^\d+$/.test(portValue || '') || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid port')

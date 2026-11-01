@@ -38,7 +38,7 @@ export async function startServer(options: RuntimeOptions): Promise<void> {
 
 if (require.main === module) {
   if (process.argv.includes('--help')) {
-    process.stderr.write('WeFlow MCP: weflow-mcp.cmd [--user-data DIR] [--data-dir DIR] [--mode live|snapshot] [--timezone IANA]\n--http 本机 HTTP /mcp（--port 或 WEFLOW_MCP_PORT，默认 8765）。\n--share 启动 HTTP 与临时公网隧道并保存连接块。\n--rotate-token 撤销旧令牌（下一次请求生效）。\n--qq-check 检查 QQ 配置与只读数据库连接（不输出消息或密钥）。\n--print-config 输出可复制的客户端配置。\n--check 使用临时 stdio 客户端验证握手和数据读取，输出 JSON 并退出。\n先用 WeFlow prepare 准备账号；MCP 不自动获取密钥或创建副本。\n')
+    process.stderr.write('WeFlow MCP: weflow-mcp.cmd [--user-data DIR] [--data-dir DIR] [--mode live|snapshot] [--timezone IANA]\n--http 本机 HTTP /mcp（--port 或 WEFLOW_MCP_PORT，默认 8765）。\n--share 危险、不推荐，仅限最后手段；必须同时传入 --i-understand-public-exposure。任何持有 URL 和令牌的人都能读取所有可访问的聊天。\n--rotate-token 撤销旧令牌（下一次请求生效）。\n--qq-check 检查 QQ 配置与只读数据库连接（不输出消息或密钥）。\n--print-config 输出可复制的客户端配置。\n--check 使用临时 stdio 客户端验证握手和数据读取，输出 JSON 并退出。\n先用 WeFlow prepare 准备账号；MCP 不自动获取密钥或创建副本。\n')
   } else if (process.argv.some(arg => ['--http', '--share', '--rotate-token'].includes(arg))) {
     void import('./http').then(({ runRemote }) => runRemote(process.argv.slice(2), parseOptions)).catch(() => {
       process.stderr.write('HTTP MCP 启动失败，请检查参数、端口及 cloudflared。\n'); process.exitCode = 1
