@@ -86,15 +86,7 @@ db.commit(); db.close()
   }
 })
 
-test('stdio server advertises and dispatches QQ tools without preparing WeChat', async (context) => {
-  // Some managed sandboxes forbid Node child processes with piped stdio.
-  const probe = spawnSync(process.execPath, ['-e', ''], { encoding: 'utf8' })
-  if ((probe.error as NodeJS.ErrnoException | undefined)?.code === 'EPERM') {
-    context.skip('Sandbox forbids Node child processes with piped stdio')
-    return
-  }
-  assert.ifError(probe.error)
-  assert.equal(probe.status, 0, probe.stderr)
+test('stdio server advertises and dispatches QQ tools without preparing WeChat', async () => {
   const { build } = await import('esbuild')
   const { Client } = await import('@modelcontextprotocol/sdk/client/index.js')
   const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js')
@@ -104,10 +96,8 @@ test('stdio server advertises and dispatches QQ tools without preparing WeChat',
   const client = new Client({ name: 'qq-fixture', version: '1' })
   const transport = new StdioClientTransport({ command: process.execPath, args: [entry, '--user-data', directory],
     env: { ...process.env, WEFLOW_BACKEND_ROOT: resolve('python'), WEFLOW_PYTHON: python, WEFLOW_QQ_CONFIG: join(directory, 'missing.json') } as Record<string, string>, stderr: 'pipe' })
-  let stderr = ''
-  transport.stderr?.on('data', chunk => { stderr += chunk.toString() })
   try {
-    await client.connect(transport).catch(error => { throw new Error(`${error.message}\n${stderr}`, { cause: error }) })
+    await client.connect(transport)
     const listing = await client.listTools()
     assert.ok(listing.tools.some(t => t.name === 'read_messages'))
     for (const definition of QQ_TOOL_DEFINITIONS) assert.ok(listing.tools.some(t => t.name === definition.name))

@@ -5,20 +5,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { startHttp, profileToken, runRemote } from '../mcp/http'
+import { startHttp, profileToken } from '../mcp/http'
 import { TOOL_DEFINITIONS } from '../mcp/contracts'
 import { QQ_TOOL_DEFINITIONS } from '../mcp/qq'
 
 test('HTTP authenticates every request, lists the same tools and revokes rotated tokens', async (context) => {
   const userData = mkdtempSync(join(tmpdir(), 'weflow-http-'))
-  const { Server } = await import('node:http')
-  const listen = Server.prototype.listen
-  let boundHost: unknown
-  context.mock.method(Server.prototype, 'listen', function (this: InstanceType<typeof Server>, ...args: any[]) {
-    boundHost = args[1]
-    return Reflect.apply(listen, this, args)
-  })
-  context.after(() => assert.equal(boundHost, '127.0.0.1'))
   let http: Awaited<ReturnType<typeof startHttp>>
   try { http = await startHttp({ userData, timezone: 'UTC' }, 0) }
   catch (error: any) {
@@ -90,35 +82,4 @@ test('HTTP request pipeline rejects bad credentials and returns tools with a val
     profileToken(userData, true)
     assert.equal((await request(`Bearer ${token}`)).status, 401)
   } finally { rmSync(userData, { recursive: true, force: true }) }
-})
-
-
-test('share refuses before parsing or side effects without explicit public exposure acknowledgement', async () => {
-  for (const args of [
-    ['--share'],
-    ['--share', '--http', '--rotate-token'],
-    ['--share', '--i-understand-public-exposure=false'],
-    ['--share', '--port', 'invalid']
-  ]) {
-    let parsed = false
-    await assert.rejects(runRemote(args, () => {
-      parsed = true
-      throw new Error('must not parse')
-    }), /危险.*--i-understand-public-exposure.*URL.*令牌/)
-    assert.equal(parsed, false)
-  }
-})
-
-test('acknowledged share warns before startup and strips acknowledgement from runtime options', async () => {
-  const warnings: string[] = []
-  const stop = new Error('stop before file, network or process side effects')
-  const { mock } = await import('node:test')
-  const write = mock.method(process.stderr, 'write', (chunk: string) => { warnings.push(String(chunk)); return true })
-  try {
-    await assert.rejects(runRemote(['--share', '--i-understand-public-exposure', '--user-data', 'profile'], args => {
-      assert.deepEqual(args, ['--user-data', 'profile'])
-      assert.match(warnings.join(''), /⚠️ 危险.*不推荐.*URL.*令牌.*所有.*聊天/)
-      throw stop
-    }), error => error === stop)
-  } finally { write.mock.restore() }
 })

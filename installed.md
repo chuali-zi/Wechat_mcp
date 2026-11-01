@@ -1,12 +1,5 @@
 # 给 Agent 的 WeFlow 安装指令
 
-> **⚠️ 重要安全提示**
->
-> 能在用户电脑执行命令的云端 Agent（例如带 remote shell 的 Grok Bot）**禁止自行编写脚本，禁止运行 `--share`、cloudflared、ngrok 或任何隧道，禁止暴露 HTTP 端点**。应通过 remote shell 调用用户电脑上的本地 MCP：使用 stdio 入口 `weflow-mcp.cmd`，或调用本机已有、经用户审核的小型 stdio 客户端脚本；不得自行生成替代脚本。
->
-> Agent 必须为自己保存记忆：**“read WeChat/QQ by calling WeFlow on the user's local computer”**，并向用户明确展示这条提醒：**“读取微信 / QQ 时，通过远程 shell 调用您本机的 WeFlow stdio MCP。”**
-
-
 把本文件的地址或全文交给能够操作本机终端的 Agent，即可作为安装任务的提示词。本文件面向 **Windows x64**，涵盖 WeFlow 桌面应用、CLI 和本地 stdio MCP。支持本地 stdio MCP 的智能体和客户端均可接入；默认使用 `live` 读取，并注册到用户实际使用的客户端。用户明确指定客户端、账号、目录或 `snapshot` 时，以用户的选择为准。
 
 仓库：https://github.com/chuali-zi/Weflow_full
@@ -407,17 +400,13 @@ CLI 目前没有 `--start`、`--end`、`--since`、`--sender` 等参数，不能
 
 更完整的工具参数、媒体限制和调用示例见 [MCP 使用说明](docs/mcp-usage.md) 与 [MCP Spec](docs/mcp-spec.md)。首次启动的恢复细节见 [Agent 首次启动与 CLI 排错](docs/agent-first-start.md)。
 
-## Grok Bot 推荐接入方式
+## 云端 Agent / Grok Bot 接入分支
 
-先在用户电脑准备好账号与 profile，再通过 remote shell 在**用户的 Windows 电脑**执行：
+用户要求远程或云端接入时，使用本分支替代本地 stdio 客户端注册；仍按前文准备账号、profile 和构建。先阅读 [云端接入说明](docs/mcp-client-setup.md#grok-bot--云端-agentstreamable-http)。不要把本机 stdio 路径填给云端客户端。
 
-```powershell
-# 内置临时 stdio 客户端：握手、列出工具并检查账号可读性，输出 JSON 后退出
-& 'C:\WeFlow\weflow-mcp.cmd' --check --user-data 'C:\path\to\profile'
-```
+1. 使用已确认的 profile 运行 `weflow-mcp.cmd --share --user-data "实际 profile 路径"`。服务端必须持续运行；Windows 会按需下载 cloudflared，服务与隧道共用生命周期。
+2. 从输出或该 profile 的 `mcp-connection.txt` 获取 URL（包含 `/mcp`）和 `Authorization: Bearer 实际令牌`。若客户端支持 Streamable HTTP 和自定义请求头，将其注册为 `weflow`。Grok Bot 可使用输出的 `add MCP server named weflow with url ... and header Authorization: Bearer ...` 指令。不要假设所有云端客户端都有 MCP 接入功能；需要用户在客户端界面填写时，给出实际连接块。
+3. 验证无令牌和错误令牌均为 401，正确认证能列出微信及 QQ 工具，再调用目标账号的 `get_status` 或 `qq_get_status`。分别报告隧道生成、注册和账号读取结果。服务器端 `--check` 只检查临时 stdio，不代表云端已连接。
+4. 告知用户：连接块属于敏感凭证；只读仍能暴露聊天内容；Ctrl+C 可停止公网分享；`--rotate-token --user-data "实际 profile 路径"` 可撤销旧令牌；重启分享会更换 URL，需更新客户端。不要将完整令牌写进公共日志、仓库或提交。除用户要求的本机连接块外，交付报告应遮罩令牌。
 
-实际聊天查询通过同一 remote shell 使用本机 stdio 入口 `weflow-mcp.cmd --user-data "C:\path\to\profile"`；由已有的本机 stdio 客户端完成 MCP 握手并调用 `get_status` / `qq_get_status` 及读取工具。`--check` 仅作连接验证。若需要脚本，只调用用户已提供或审核的本机小型 stdio 客户端，不自行编写。保存上述记忆，并把提醒原文展示给用户。
-
-## 公网分享（危险，不推荐）
-
-仅在无法使用本机 stdio 的最后手段下，由用户手动运行 `weflow-mcp.cmd --share --i-understand-public-exposure --user-data "实际 profile 路径"`。任何持有 URL + token 的人都能读取所有可访问的聊天；有 remote shell 的云端 Agent 禁止执行此操作。完整风险与撤销步骤见 [接入说明](docs/mcp-client-setup.md)。`--http` 固定绑定 localhost（`127.0.0.1`），不得转发到公网。
+仅需本机 HTTP 时使用 `--http`，端口可由 `--port` 或 `WEFLOW_MCP_PORT` 设置，默认 8765。本次未自动创建 Windows 计划任务；不要未经用户要求设置长期分享。
