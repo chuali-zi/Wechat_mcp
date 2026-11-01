@@ -177,3 +177,15 @@ npm run test:qq
 仅在无法使用本机 stdio 的最后手段下，由用户了解风险后手动运行 `weflow-mcp.cmd --share --i-understand-public-exposure`。**任何持有 URL + token 的人都能读取所有可访问的聊天**。有 remote shell 的云端 Agent 禁止使用。详细限制与撤销步骤见 [接入说明](docs/mcp-client-setup.md)。
 
 仅本机 HTTP 使用 `weflow-mcp.cmd --http --port 8765`，固定绑定 `127.0.0.1`。不要将它通过隧道或代理暴露到公网。
+
+## WeChat images and group files over local MCP
+
+Use the existing local stdio connection (`weflow-mcp.cmd`, or your existing `call.cjs` wrapper). Existing tool names and arguments remain compatible.
+
+- `read_messages` and `search_messages` now expose stable `attachment.id`, image/file metadata and local availability. Compact reads keep these fields in `details.attachment`.
+- `list_attachments` lists a private chat or group's image/file messages: `{"chat_id":"<find_chats ID>","kind":"all","range":{"start":"2026-10-01T00:00:00-04:00","end":"2026-11-01T00:00:00-04:00"},"limit":100}`. Follow `coverage.next_cursor` with only `{"cursor":"..."}` on the same tool. Without a range, the normal recent-message range applies.
+- `get_attachment`: `{"attachment_id":"<attachment.id>","inline_image":true}` returns an absolute `local_path` and, for supported images, optional MCP image content. A local agent can read/open that path. Decoded images go to the selected app-data profile's `media-cache`, never the checkout. File paths refer to verified existing source files; the tool does not execute them.
+
+XOR, V1 and cached-key V2 images reuse the shared decoders. HEIC uses the existing conversion worker. Stored thumbnail/standard/high-definition variants are reported explicitly. Files require matching MD5 and size when known; missing bytes or unverifiable references remain unavailable. No automatic WeChat downloads, messages, HTTP exposure or tunnels are added. Fetching requires local stdio. The cache contains plaintext media and has no automatic eviction.
+
+See [media research, design, limitations and Windows verification](docs/wechat-media-research.md). Run `npm run build:mcp` and `npm run test:mcp` for synthetic regression checks.
