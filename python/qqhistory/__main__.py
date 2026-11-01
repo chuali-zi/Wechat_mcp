@@ -9,6 +9,8 @@ def main():
     try:
         request = json.load(sys.stdin)
         config, config_revision = load_config(request['config'])
+        if request.get('capture_root'):
+            config['_capture_root'] = request['capture_root']
         with capture(config) as (db, source_revision, plain):
             aux = [fingerprint(config['db_dir'] / name) for name in ('group_info.db', 'profile_info.db')]
             revision = hashlib.sha256((config_revision + source_revision + repr(aux)).encode()).hexdigest()

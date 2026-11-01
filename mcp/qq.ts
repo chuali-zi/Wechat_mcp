@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { resolve, join, dirname } from 'node:path'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { randomBytes } from 'node:crypto'
 import { TOOL_DEFINITIONS, argumentSchema, type ToolData } from './contracts'
 import { validate } from './tools'
@@ -17,6 +18,7 @@ type Reply = { success: boolean; code?: string; data: any; uin: string; revision
 export function runQQ(request: Record<string, unknown>, signal?: AbortSignal): Promise<Reply> {
   if (signal?.aborted) return Promise.reject(Object.assign(new Error('CANCELLED'), { code: 'CANCELLED' }))
   return new Promise((accept, reject) => {
+    const captureRoot = mkdtempSync(join(tmpdir(), 'weflow-qq-worker-'))
     const root = process.env.WEFLOW_BACKEND_ROOT || resolve(__dirname, '../../python')
     const bundled = !process.env.WEFLOW_BACKEND_ROOT && [resolve(__dirname, '../backend/weflow-backend.exe'),
       join((process as NodeJS.Process & { resourcesPath?: string }).resourcesPath || '', 'backend/weflow-backend.exe')].find(p => existsSync(p))
@@ -41,18 +43,21 @@ export function runQQ(request: Record<string, unknown>, signal?: AbortSignal): P
     // SQLCipher may include SQL in native stderr; never forward it or keys.
     child.stderr.resume()
     child.on('close', code => {
+      // The parent owns temporary captures, including cancelled/killed workers.
+      try { rmSync(captureRoot, { recursive: true, force: true, maxRetries: 3 }) } catch { /* OS may temporarily hold a file; no source path is ever removed. */ }
       if (code !== 0) return finish('QQ_BACKEND_EXITED')
       try { finish(undefined, JSON.parse(output)) } catch { finish('QQ_PROTOCOL_ERROR') }
     })
-    child.stdin.end(JSON.stringify(request))
+    child.stdin.end(JSON.stringify({ ...request, capture_root: captureRoot }))
   })
 }
 
-type State = { tool: string; args: Record<string, any>; revision: string; touched: number }
+type State = { tool: string; args: Record<string, any>; revision: string; touched: number; next?: string }
 export class QQTools {
   private cursors = new Map<string, State>()
+  private shutdown = new AbortController()
   constructor(private userData: string, private timezone: string, private backend = runQQ) {}
-  close() { this.cursors.clear() }
+  close() { this.shutdown.abort(); this.cursors.clear() }
   async call(name: string, input: unknown, signal?: AbortSignal): Promise<CallToolResult> {
     const queriedAt = new Date().toISOString()
     const output: ToolData = { schema_version: '1', success: false, account: null, timezone: this.timezone, data: {}, coverage: null,
@@ -66,11 +71,13 @@ export class QQTools {
       let args = input as Record<string, any>
       if (validate(args, argumentSchema(definition!.inputSchema, args))) fail('INVALID_ARGUMENT')
       let revision: string | undefined
+      let resumed: State | undefined
       const now = Date.now()
       for (const [token, state] of this.cursors) if (now - state.touched > 600_000) this.cursors.delete(token)
       if (args.cursor) {
         const state = this.cursors.get(args.cursor)
         if (!state || state.tool !== tool) fail('CURSOR_INVALID')
+        resumed = state
         state!.touched = now; args = { ...state!.args }; revision = state!.revision
       } else {
         args = { ...args }
@@ -86,7 +93,7 @@ export class QQTools {
         }
       }
       const config = process.env.WEFLOW_QQ_CONFIG || join(this.userData, 'qq-config.json')
-      const reply = await this.backend({ config, action: actions[tool], args, revision }, signal)
+      const reply = await this.backend({ config, action: actions[tool], args, revision }, signal ? AbortSignal.any([signal, this.shutdown.signal]) : this.shutdown.signal)
       if (!reply.success) fail(reply.code || 'QQ_READ_FAILED')
       output.success = true; output.account = { id: `qq:${reply.uin}`, self_id: `qq:${reply.uin}:person:${reply.uin}` }
       output.freshness = { ...output.freshness, mode: 'live', connection_id: reply.revision, captured_at: queriedAt, consistency: 'per_database' }
@@ -108,8 +115,9 @@ export class QQTools {
       if (tool !== 'get_status') {
         let next: string | null = null
         if (more) {
-          if (this.cursors.size >= 256) fail('QQ_CURSOR_LIMIT')
-          next = randomBytes(24).toString('base64url')
+          if (!resumed?.next && this.cursors.size >= 256) fail('QQ_CURSOR_LIMIT')
+          next = resumed?.next || randomBytes(24).toString('base64url')
+          if (resumed) resumed.next = next
           this.cursors.set(next, { tool, revision: reply.revision, touched: now,
             args: { ...args, ...(tool === 'find_chats' ? { _offset: position } : { _position: position }) } })
         }

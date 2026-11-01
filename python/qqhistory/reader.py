@@ -125,7 +125,7 @@ def capture(config, filename='nt_msg.db'):
     if Path(str(source) + '-journal').exists():
         raise QQError('QQ_SOURCE_BUSY')
     before = fingerprint(source)
-    with tempfile.TemporaryDirectory(prefix='weflow-qq-') as directory:
+    with tempfile.TemporaryDirectory(prefix='weflow-qq-', dir=config.get('_capture_root')) as directory:
         target = Path(directory) / filename
         with source.open('rb') as incoming, target.open('wb') as outgoing:
             header = incoming.read(16)
