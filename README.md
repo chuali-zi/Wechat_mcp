@@ -153,3 +153,9 @@ npm run test:qq
 ```
 
 `test:qq` covers protobuf blobs, synthetic SQLite, real SQLCipher with the QQ header and WAL (when `sqlcipher3` is installed), exact passwords, read-only source checks, reloads and safe diagnostics. `test:mcp` includes worker integration, pagination/filter errors and actual stdio tool registration. On Windows, additionally verify the actual installed QQ schema/key, send a new message **using QQ itself**, then confirm a fresh MCP read sees it, an old cursor becomes stale, and source files are unaffected by MCP reads. Real QQ extraction and Windows file-sharing/WAL behavior have not been validated on this Linux machine.
+
+## 远程 / 云端 MCP（Grok Bot）
+
+本机准备账号后运行 `weflow-mcp.cmd --share`，即可启动带 Bearer 认证的 Streamable HTTP 服务和 cloudflared 临时隧道。Windows 缺少 cloudflared 时自动下载到 profile 的 `tools` 目录。控制台会给出以 `/mcp` 结尾的 URL、Authorization 请求头和可复制给 Grok Bot 的指令，并保存到 profile 的 `mcp-connection.txt`。完整连接块含敏感令牌，只交给受信任客户端。
+
+仅本机 HTTP 使用 `weflow-mcp.cmd --http --port 8765`（也支持 `WEFLOW_MCP_PORT`），固定绑定 `127.0.0.1`。`--user-data DIR` 选择 profile，`--rotate-token` 撤销旧令牌；Ctrl+C 停止分享。临时公网 URL 每次重启会变化。微信 / QQ 工具保持只读，但云端客户端可读取聊天数据；默认 stdio 行为保持不变。完整步骤与安全说明见 [云端 MCP 接入](docs/mcp-client-setup.md#grok-bot--云端-agentstreamable-http)。

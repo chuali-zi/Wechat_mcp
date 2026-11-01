@@ -49,3 +49,35 @@ npm run check:mcp-setup
 这不等于所有 Windows 机器均已验收。干净虚拟机、不同 Windows 用户、企业策略、杀毒软件干预、系统重启和完整交互安装仍需实机验收。现有 Python snapshot 准备流程在某些深层路径上仍可能触及 Windows 长路径限制；客户端配置长路径通过不代表 snapshot 路径同样不受限制。
 
 客户端格式参考：[Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)、[Claude Code MCP](https://code.claude.com/docs/en/mcp)。
+
+## Grok Bot / 云端 Agent（Streamable HTTP）
+
+先在本机准备好微信或 QQ 账号，保持这台电脑在线。默认不带参数的 `weflow-mcp.cmd` 仍使用 stdio；GUI 接入仍为本地 stdio。云端客户端必须支持 **Streamable HTTP 和自定义 Authorization 请求头**，仅支持 stdio 或旧版 SSE 的客户端不能直接使用此入口。
+
+```powershell
+# 仅本机 HTTP，固定绑定 127.0.0.1，路径 /mcp
+.\weflow-mcp.cmd --http --port 8765 --user-data 'C:\path\to\profile'
+# 公网临时分享；也可运行 scripts\weflow-share.ps1 或 .cmd
+.\weflow-mcp.cmd --share --user-data 'C:\path\to\profile'
+```
+
+`--port` 优先于环境变量 `WEFLOW_MCP_PORT`，默认 8765。使用与桌面应用相同的 profile；省略 `--user-data` 时沿用现有默认 profile。微信和 QQ 的工具与 stdio 相同，数据读取限制也相同；导出文件路径位于服务端本机，云端 Agent 不一定能够读取，应优先调用直接返回内容的读取工具。
+
+Windows 首次分享会从 Cloudflare 官方 GitHub release 下载对应架构的 `cloudflared.exe` 到 `<profile>\tools`。其他系统需先安装 cloudflared 并加入 PATH。隧道就绪后打印并保存 `<profile>\mcp-connection.txt`：
+
+```text
+URL: https://example.trycloudflare.com/mcp
+Authorization: Bearer <token>
+
+add MCP server named weflow with url https://example.trycloudflare.com/mcp and header Authorization: Bearer <token>
+```
+
+给 Grok Bot 的中文操作说明：复制实际输出的 `add MCP server named weflow ...` 指令，让它添加名为 weflow 的 MCP 服务器；或手动填写 URL 和请求头。不要把 `<token>` 占位符当作真实值。客户端能否注册远程 MCP 取决于其当前功能与账号权限。添加后让客户端列出工具，调用 `get_status` / `qq_get_status` 检查实际连接，不要仅以 URL 生成成功判断账号可读。
+
+### 安全、撤销与恢复
+
+- 令牌随机生成，保存在 `<profile>\mcp-token`，每次 HTTP 请求都必须携带 `Authorization: Bearer ...`；缺少或错误返回 401。常规启动日志只显示遮罩。为满足复制接入要求，`--share` 的连接块会显示完整令牌，保存文件也包含令牌，请只交给受信任客户端，不要上传日志或截图。
+- 工具用于只读访问微信 / QQ，不提供发送、删除消息的功能；只读仍可泄露聊天内容。持有 URL 和令牌的人可以读取已配置账号可访问的数据。云端服务会收到请求的数据。保护 profile 文件权限；Windows 沿用 profile 的 ACL，其他平台新建令牌和连接文件权限为 0600。
+- 按 Ctrl+C 停止 HTTP 和隧道，立即撤销公网入口。运行 `.\weflow-mcp.cmd --rotate-token --user-data 'C:\path\to\profile'` 轮换令牌；旧令牌在下一次请求时失效，已在执行的请求可能完成。已保存连接块会被清除，重新运行 `--share` 获取新连接块。`--rotate-token --share` 也可一起使用。
+- quick tunnel URL 每次重启会变化，需要更新云端客户端配置；它没有固定域名或可用性保证。电脑休眠、断网或终端关闭会断开连接，隧道退出时 HTTP 服务也会关闭。不要将 HTTP 端口直接绑定公网或关闭认证。
+- 本次未提供自动开机启动任务。需要持续服务时保持分享终端运行；重启后重新分享并更新 URL。
