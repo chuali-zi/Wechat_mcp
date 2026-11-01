@@ -29,7 +29,7 @@ function result(messageId: string, kind: string, availability: string, reason?: 
 }
 
 async function getRow(runtime: Runtime, locator: Locator, signal?: AbortSignal): Promise<Record<string, any> | null> {
-  const response = await runtime.call('getMessageByLocator', { sessionId: locator.sessionId, locator: locator.locator }, signal, 2000)
+  const response = await runtime.call('getMessageByLocator', { sessionId: locator.sessionId, locator: locator.locator }, signal)
   if (response?.success === false) return null
   if (response?.message === null || response?.row === null || response?.data?.message === null || response?.data?.row === null) return null
   const data = asRecord(response?.data ?? response)
@@ -48,7 +48,7 @@ function findPath(value: unknown): string | undefined {
 
 async function resolveHardlink(runtime: Runtime, md5: string, accountDir: string, signal?: AbortSignal): Promise<any | null> {
   try {
-    return await runtime.call('resolveImageHardlink', { md5, accountDir }, signal, 2000)
+    return await runtime.call('resolveImageHardlink', { md5, accountDir }, signal)
   } catch (caught) {
     const error = caught as Error & { code?: string }
     if (error.code === 'CANCELLED' || error.code === 'PROFILE_LOCKED' || error.code === 'PROFILE_CONFIG_INVALID') throw caught
@@ -70,7 +70,7 @@ async function imageData(runtime: Runtime, body: string, accountDir: string, sig
   if (!/\.(?:jpe?g|png|gif|webp|bmp|heic|heif)$/i.test(filePath)) {
     let keysResponse: any
     try {
-      keysResponse = await runtime.call('getCachedImageKeys', { accountDir }, signal, 2000)
+      keysResponse = await runtime.call('getCachedImageKeys', { accountDir }, signal)
     } catch (caught) {
       const error = caught as Error & { code?: string }
       if (error.code === 'IMAGE_KEY_REQUIRED') return { availability: 'key_required', reason: 'IMAGE_KEY_REQUIRED' }

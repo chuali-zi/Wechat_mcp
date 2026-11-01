@@ -122,17 +122,17 @@ async function getRawBatch(runtime: Runtime, scan: ScanChat, state: ScanState, s
     let afterPosition: unknown = state.filters.afterMessage?.sessionId === scan.sessionId ? state.filters.afterPosition : undefined
     if (state.filters.afterMessage?.sessionId === scan.sessionId) {
       if (!afterPosition) {
-        const found = await runtime.call('getMessageByLocator', { sessionId: scan.sessionId, locator: state.filters.afterMessage.locator }, signal, 2000)
+        const found = await runtime.call('getMessageByLocator', { sessionId: scan.sessionId, locator: state.filters.afterMessage.locator }, signal)
         const row = found?.message ?? found?.data?.message
         if (!found?.success || !row) throw fail('MESSAGE_NOT_FOUND', 'after_message 锚点无法定位。', false, '从 find_chats 选择会话后重新读取范围。')
         afterPosition = [row.create_time ?? row.createTime, row.sort_seq ?? row.sortSeq ?? 0, row.local_id ?? row.localId ?? 0, row._relative_db ?? '']
       }
     }
-    const opened = await runtime.call('openMessageCursor', { sessionId: scan.sessionId, batchSize: state.filters.batchSize || 100, ascending: state.filters.direction !== 'desc', beginTimestamp: state.filters.begin, endTimestamp: state.filters.finish, ...(afterPosition ? { afterPosition } : {}) }, signal, 10000)
+    const opened = await runtime.call('openMessageCursor', { sessionId: scan.sessionId, batchSize: state.filters.batchSize || 100, ascending: state.filters.direction !== 'desc', beginTimestamp: state.filters.begin, endTimestamp: state.filters.finish, ...(afterPosition ? { afterPosition } : {}) }, signal)
     if (!opened?.success) throw fail('READ_FAILED', opened?.error || '无法打开消息游标。', true)
     scan.cursor = opened.cursor
   }
-  const batch = await runtime.call('fetchMessageBatch', { cursor: scan.cursor }, signal, 10000)
+  const batch = await runtime.call('fetchMessageBatch', { cursor: scan.cursor }, signal)
   if (!batch?.success) throw fail('READ_FAILED', batch?.error || '读取消息批次失败。', true)
   const rows = Array.isArray(batch.rows) ? batch.rows : []
   for (const row of rows) {
@@ -177,7 +177,7 @@ async function resolveQuotes(runtime: Runtime, conn: Awaited<ReturnType<Runtime[
     if (present) { output.push({ ...message, quote: { ...message.quote, state: 'resolved' } }); continue }
     try {
       const decoded = decodeMessageId(message.quote.target_id, conn.accountScope)
-      const located = await runtime.call('getMessageByLocator', { sessionId: decoded.sessionId, locator: decoded.locator }, signal, 2000)
+      const located = await runtime.call('getMessageByLocator', { sessionId: decoded.sessionId, locator: decoded.locator }, signal)
       const row = located?.message || located?.data?.message
       if (located?.success && row) {
         const resolvedMessage = { ...message, quote: { ...message.quote, state: 'resolved' } }
@@ -197,11 +197,11 @@ async function scanReplyRange(runtime: Runtime, conn: Awaited<ReturnType<Runtime
   for (const scan of state.replyScans || []) {
     while (!scan.done && Date.now() - started < 4200 && !signal?.aborted) {
       if (scan.cursor === null) {
-        const opened = await runtime.call('openMessageCursor', { sessionId: scan.sessionId, batchSize: 100, ascending: true, beginTimestamp: scan.begin, endTimestamp: scan.finish }, signal, 2000)
+        const opened = await runtime.call('openMessageCursor', { sessionId: scan.sessionId, batchSize: 100, ascending: true, beginTimestamp: scan.begin, endTimestamp: scan.finish }, signal)
         if (!opened?.success) throw fail('READ_FAILED', opened?.error || '无法打开回复范围游标。', true)
         scan.cursor = opened.cursor
       }
-      const batch = await runtime.call('fetchMessageBatch', { cursor: scan.cursor }, signal, 2000)
+      const batch = await runtime.call('fetchMessageBatch', { cursor: scan.cursor }, signal)
       if (!batch?.success) throw fail('READ_FAILED', batch?.error || '读取回复范围失败。', true)
       for (const row of batch.rows || []) {
         const message = normalizeMessage(row, { accountId: conn.accountId, accountScope: conn.accountScope, sessionId: scan.sessionId })
@@ -330,7 +330,7 @@ export async function getGroupMembers(runtime: Runtime, args: any, signal?: Abor
   if (!token) {
     const sessionId = decodeChatId(args.chat_id, conn.accountScope)
     if (!sessionId.endsWith('@chatroom')) throw fail('INVALID_ARGUMENT', 'chat_id 必须是群聊 ID。')
-    const response = await runtime.call('getGroupMembers', { chatroomId: sessionId }, signal, 10000)
+    const response = await runtime.call('getGroupMembers', { chatroomId: sessionId }, signal)
     if (!response?.success || !Array.isArray(response.members)) throw fail('GROUP_MEMBERS_UNAVAILABLE', '无法读取群成员名单。')
     const members = response.members.map((member: any) => ({
       person_id: personId(conn.accountScope, member.username),
@@ -389,9 +389,9 @@ export async function findChats(runtime: Runtime, args: any, signal?: AbortSigna
     const coverage = { requested_scope: tokenState.value.scope, progress: [], scope_progress: { selected_chats: tokenState.value.total, completed_chats: tokenState.value.total, remaining_chats: 0 }, scan_complete: true, returned_count: chats.length, has_more: !!tokenState.next, next_cursor: tokenState.next, truncated: false, omissions: [], unresolved_content: { by_type: {}, samples: [], samples_complete: true } } as Coverage
     return dataResult(runtime, conn, tokenState.value.freshness, { chats }, coverage, chats.length)
   }
-  const resp = await runtime.call('getContactsCompact', {}, signal, 3000)
+  const resp = await runtime.call('getContactsCompact', {}, signal)
   const records = Array.isArray(resp?.contacts) ? resp.contacts : []
-  const sessionResp = await runtime.call('getSessions', {}, signal, 3000)
+  const sessionResp = await runtime.call('getSessions', {}, signal)
   const sessions = Array.isArray(sessionResp?.sessions) ? sessionResp.sessions : []
   const recent = new Map(sessions.map((s: any) => [String(s.username), s]))
   const query = String(args.query || '').trim().normalize('NFC').toLocaleLowerCase('und')
@@ -431,7 +431,7 @@ async function scanTool(runtime: Runtime, tool: string, args: any, signal?: Abor
       if (args.range || chats.length !== 1) throw fail('INVALID_ARGUMENT', 'after_message 仅用于单会话，且不能与 range 同时使用。')
       const anchor = decodeMessageId(args.after_message, conn.accountScope)
       if (anchor.sessionId !== chats[0].sessionId) throw fail('INVALID_ARGUMENT', 'after_message 必须属于所选会话。')
-      const located = await runtime.call('getMessageByLocator', { sessionId: anchor.sessionId, locator: anchor.locator }, signal, 2000)
+      const located = await runtime.call('getMessageByLocator', { sessionId: anchor.sessionId, locator: anchor.locator }, signal)
       const row = located?.message ?? located?.data?.message
       if (!located?.success || !row) throw fail('MESSAGE_NOT_FOUND', 'after_message 锚点无法定位。', false, '从 find_chats 选择会话后重新读取范围。')
       const anchorTime = Number(row.create_time ?? row.createTime ?? anchor.locator.createTime)
@@ -544,7 +544,7 @@ export async function* readMessageBatches(runtime: Runtime, args: any, signal?: 
     }
   } finally {
     for (const chat of state.chats) {
-      if (chat.cursor !== null) await runtime.call('closeMessageCursor', { cursor: chat.cursor }, undefined, 2000).catch(() => undefined)
+      if (chat.cursor !== null) await runtime.call('closeMessageCursor', { cursor: chat.cursor }, undefined).catch(() => undefined)
     }
   }
 }
@@ -552,7 +552,7 @@ export async function searchMessages(runtime: Runtime, args: any, signal?: Abort
   checkCursorArgs(args)
   if (args.cursor) return scanTool(runtime, 'search_messages', args, signal)
   if (!Array.isArray(args.query?.terms) || args.query.terms.length < 1 || args.query.terms.length > 8 || args.query.terms.some((t: any) => typeof t !== 'string' || !t.trim())) throw fail('INVALID_ARGUMENT', 'query.terms 必须包含 1 到 8 个非空字面词。')
-  if (!args.chat_ids) { const found = await runtime.call('getContactsCompact', {}, signal, 3000); const conn = await runtime.ensureConnected(signal); args = { ...args, _globalSearch: true, chat_ids: (found.contacts || []).filter((c: any) => c.local_type === 1 || c.local_type === 2).map((c: any) => chatId(conn.accountScope, c.username)) } }
+  if (!args.chat_ids) { const found = await runtime.call('getContactsCompact', {}, signal); const conn = await runtime.ensureConnected(signal); args = { ...args, _globalSearch: true, chat_ids: (found.contacts || []).filter((c: any) => c.local_type === 1 || c.local_type === 2).map((c: any) => chatId(conn.accountScope, c.username)) } }
   return scanTool(runtime, 'search_messages', args, signal)
 }
 
@@ -653,7 +653,7 @@ export async function getMessageContext(runtime: Runtime, args: any, signal?: Ab
     try { decoded = decodeMessageId(id, conn.accountScope) } catch { throw fail('INVALID_ARGUMENT', 'message_id 无效或属于其他账号。') }
     const { sessionId, locator } = decoded
     let located: any
-    try { located = await runtime.call('getMessageByLocator', { sessionId, locator }, signal, 2000) }
+    try { located = await runtime.call('getMessageByLocator', { sessionId, locator }, signal) }
     catch (error: any) {
       if (error?.code === 'MESSAGE_NOT_FOUND') { anchors.push({ message_id: id, state: 'error', error: { code: 'MESSAGE_NOT_FOUND' } }); warnings.push({ code: 'MESSAGE_NOT_FOUND', message_id: id }); continue }
       throw error
@@ -665,9 +665,9 @@ export async function getMessageContext(runtime: Runtime, args: any, signal?: Ab
     anchors.push({ message_id: id, state: 'found' })
       const readAround = async (direction: 'asc'|'desc', count: number) => {
         if (count === 0) return []
-        const around = await runtime.call('openMessageCursorAround', { sessionId, anchorLocator: locator, direction, batchSize: Math.max(1, Math.min(50, count + 1)) }, signal, 2500)
+        const around = await runtime.call('openMessageCursorAround', { sessionId, anchorLocator: locator, direction, batchSize: Math.max(1, Math.min(50, count + 1)) }, signal)
         if (!around?.success || around.cursor === undefined) throw fail('READ_FAILED', around?.error || '无法读取上下文邻居。', true)
-        const batch = await runtime.call('fetchMessageBatch', { cursor: around.cursor }, signal, 2000)
+        const batch = await runtime.call('fetchMessageBatch', { cursor: around.cursor }, signal)
         if (!batch?.success) throw fail('READ_FAILED', batch?.error || '读取上下文邻居失败。', true)
         return (batch?.rows || []).map((row: any) => { const message = normalizeMessage(row, { accountId: conn.accountId, accountScope: conn.accountScope, sessionId }); rawById.set(message.id, String(mapRowsToMessagesLite([row], conn.accountId)[0]?.content ?? row.message_content ?? row.compress_content ?? '')); return message })
       }

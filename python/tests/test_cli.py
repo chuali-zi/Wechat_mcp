@@ -102,8 +102,8 @@ class CliTests(unittest.TestCase):
     def invoke(self, argv, windows):
         backends = []
 
-        def create_backend(state_dir, progress=lambda message: None):
-            backend = Backend(state_dir, windows=windows, progress=progress)
+        def create_backend(state_dir, progress=lambda message: None, **kwargs):
+            backend = Backend(state_dir, windows=windows, progress=progress, **kwargs)
             backends.append(backend)
             return backend
 

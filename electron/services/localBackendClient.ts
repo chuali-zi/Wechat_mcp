@@ -1,3 +1,4 @@
+import { liveTimeoutMs } from '../../shared/liveTimeout'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { existsSync } from 'fs'
 import { join, resolve } from 'path'
@@ -128,7 +129,7 @@ export class LocalBackendClient {
         this.cancel(id)
         entry.reject(Object.assign(new Error('记录处理超时，请重新尝试。'), { code: 'LIVE_READ_TIMEOUT', retryable: true }))
         this.dispose()
-      }, options?.timeoutMs ?? 30 * 60_000)
+      }, options?.timeoutMs ?? Math.max(30 * 60_000, liveTimeoutMs(this.runtimeEnv?.WEFLOW_LIVE_TIMEOUT_MS ?? process.env.WEFLOW_LIVE_TIMEOUT_MS) + 2000))
       this.pending.set(id, { resolve: value => { cleanup(); resolvePromise(value) }, reject: error => { cleanup(); reject(error) }, timer, progress })
       options?.signal?.addEventListener('abort', abort, { once: true })
       this.child!.stdin.write(`${JSON.stringify({ id, method, payload })}\n`)

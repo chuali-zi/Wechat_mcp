@@ -13,12 +13,13 @@ from wxtext.errors import ToolError
 from wxtext.snapshot import inventory
 from wxtext.cipher import verify_database_integrity
 from .backend import Backend, account_root, clean_id
+from .timeouts import live_timeout_ms
 
 
 EXIT_CODES = {'NEED_EXIT': 10, 'NEED_LOGIN': 11, 'KEY_NOT_FOUND': 12,
               'ACCOUNT_REQUIRED': 13, 'ACCOUNT_DIRECTORY_MISMATCH': 13,
               'SNAPSHOT_REQUIRED': 14, 'GUI_RUNNING': 15, 'PROFILE_LOCKED': 16,
-              'CLI_USAGE': 2, 'GUI_NOT_BUILT': 17,
+              'CLI_USAGE': 2, 'INVALID_ARGUMENT': 2, 'GUI_NOT_BUILT': 17,
               'LIVE_ENGINE_UNAVAILABLE': 18, 'LIVE_BUSY': 19,
               'LIVE_READ_TIMEOUT': 20, 'SOURCE_REPLACED': 21,
               'CURSOR_STALE': 22, 'CANCELLED': 23}
@@ -45,6 +46,8 @@ def parser():
         target.add_argument('--app', type=Path, default=default, help='指定已安装的 WeFlow.exe')
         target.add_argument('--mode', choices=MODES, default=default,
                             help='读取模式：snapshot（离线副本）或 live（在线短事务）')
+        target.add_argument('--live-timeout-ms', type=live_timeout_ms, default=default, metavar='MS',
+                            help='在线查询超时毫秒数（默认 30000；环境变量 WEFLOW_LIVE_TIMEOUT_MS）')
         target.add_argument('--quiet', action='store_true', default=argparse.SUPPRESS if suppress else False, help='关闭进度输出')
     common(root)
     commands = root.add_subparsers(dest='command', required=True)
@@ -267,6 +270,8 @@ def verify_live(backend, root):
 
 def gui_command(args, profile):
     env = dict(os.environ, WEFLOW_USER_DATA_PATH=str(profile), WEFLOW_CONFIG_CWD=str(profile))
+    if getattr(args, 'live_timeout_ms', None) is not None:
+        env['WEFLOW_LIVE_TIMEOUT_MS'] = str(args.live_timeout_ms)
     env.pop('ELECTRON_RUN_AS_NODE', None)
     if args.app:
         executable = args.app.resolve()
@@ -435,7 +440,8 @@ def main(argv=None):
         def progress(message):
             if not args.quiet:
                 print(json.dumps({'type': 'progress', 'message': message}, ensure_ascii=False), file=sys.stderr, flush=True)
-        backend = Backend(profile / 'backend', progress=progress)
+        timeout = live_timeout_ms(args.live_timeout_ms)
+        backend = Backend(profile / 'backend', progress=progress, live_read_timeout_ms=timeout)
         result = execute(args, backend, profile)
     except ToolError as error:
         code = EXIT_CODES.get(error.code, 1)

@@ -92,3 +92,17 @@ weflow.cmd export --session "wxid_example" --output "D:\wechat\exports"
 | `23` | `CANCELLED` | 操作已取消，可重新发起查询。 |
 
 除退出码外，JSON 结果会包含 `success`；错误时通常还会有 `code`、`error`、`action` 和 `details`。不要只检查进程是否启动：以退出码 `0` 和 stdout 中的 `success: true` 为准。
+
+## 在线查询超时
+
+live 查询默认每次请求允许 **30000 ms（30 秒）**，为多分库和首次会话读取留出余量。可用 `--live-timeout-ms MS` 覆盖环境变量 `WEFLOW_LIVE_TIMEOUT_MS`；优先级为命令行 > 环境变量 > 默认值。该全局选项可放在子命令之前或之后，例如：
+
+```powershell
+.\weflow.cmd sessions --mode live --live-timeout-ms 60000
+$env:WEFLOW_LIVE_TIMEOUT_MS = '60000'
+.\weflow.cmd verify --mode live
+```
+
+值必须为 `1` 到 `2147481647` 的整数毫秒；空值、0、负数和非整数均报参数错误（退出码 2）。设置仅作用于当前进程，不写入账号配置；由本次 CLI 启动的 GUI 继承覆盖值。单独启动的 GUI 和 MCP 也读取同一环境变量，修改后需重启相应进程。该预算是每次后端查询的限制，不是 `prepare` 整个流程的总时限；snapshot 默认无此查询限制。取消仍会中断请求。在线原始导出的逐库捕获另有 5 秒限制，不由此选项调整。
+
+若仍出现 `LIVE_READ_TIMEOUT`（退出码 20），可增加预算或缩小查询范围；`status` 成功只表示状态可读，不保证较慢的会话查询能在预算内完成。
