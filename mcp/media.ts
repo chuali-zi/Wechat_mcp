@@ -8,6 +8,7 @@ import { decodeMessageId } from '../shared/chat/ids'
 import { mapRowsToMessagesLite } from '../shared/chat/decode'
 import { normalizeMessage } from '../shared/chat/normalize'
 import { decryptDatV3, decryptDatV4, datVersion } from '../shared/chat/imageDecrypt'
+import { wxgfToJpeg } from './wxgf'
 import { heicToJpeg, isHeic } from '../electron/services/heicDecoder'
 
 type Locator = ReturnType<typeof decodeMessageId>
@@ -108,12 +109,15 @@ async function imageData(runtime: Runtime, body: string, accountDir: string, sig
     if (!decoded) return { availability: 'decode_failed', reason: 'unsupported_image_data' }
     data = decoded
   }
-  if (data.subarray(0, 4).toString('ascii') === 'wxgf') return { availability: 'decode_failed', reason: 'unsupported_wxgf_image' }
+  let transformed = false
+  if (data.subarray(0, 4).toString('ascii') === 'wxgf') {
+    try { data = await wxgfToJpeg(data, runtime.resourcesPath, signal); transformed = true }
+    catch (error) { if (signal?.aborted) throw error; return { availability: 'decode_failed', reason: 'wxgf_conversion_failed' } }
+  }
   let mime = data.subarray(0, 3).toString('hex') === 'ffd8ff' ? 'image/jpeg'
     : data.toString('ascii', 1, 4) === 'PNG' ? 'image/png'
       : data.toString('ascii', 8, 12) === 'WEBP' ? 'image/webp' : data.toString('ascii', 0, 3) === 'GIF' ? 'image/gif' : data.toString('ascii', 0, 2) === 'BM' ? 'image/bmp' : isHeic(data) ? 'image/heic' : ''
   if (!mime) return { availability: 'decode_failed', reason: 'unsupported_image_data' }
-  let transformed = false
   if (isHeic(data)) {
     try {
       const workerPath = runtime.resourcesPath ? join(runtime.resourcesPath, 'mcp', 'heicDecodeWorker.cjs') : undefined
@@ -195,7 +199,7 @@ export async function readMedia(runtime: Runtime, messageId: string, args: Args 
   } catch { return result(messageId, kind, 'decode_failed', 'image_decode_failed', representation) }
   const maxBytes = quality === 'preview' ? 4 * 1024 * 1024 : 10 * 1024 * 1024
   if (buffer.length > maxBytes) return { data: { message_id: messageId, kind, availability: 'too_large', representation, quality, mime_type: decoded.mime, width, height, transformed, source: 'local', reason: 'image_exceeds_output_budget' } }
-  const mime = transformed ? 'image/jpeg' : decoded.mime
+  const mime = quality === 'preview' ? 'image/jpeg' : decoded.mime
   return {
     data: { ...metadata, message_id: messageId, kind, availability: 'available', representation, quality, mime_type: mime, width, height, transformed, source: 'local' },
     content: [{ type: 'image', data: b64(buffer), mimeType: mime }]

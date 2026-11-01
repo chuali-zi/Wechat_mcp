@@ -1,4 +1,6 @@
 import test from 'node:test'
+import { execFileSync } from 'node:child_process'
+import { wxgfToJpeg, wxgfCandidates } from '../mcp/wxgf'
 import assert from 'node:assert/strict'
 import { createCipheriv, createHash } from 'node:crypto'
 import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from 'node:fs/promises'
@@ -74,13 +76,20 @@ test('XOR, V1 and V2 synthetic DAT: cache paths, inline, malformed headers and m
         assert.equal((await readMedia(runtime, id, { representation: 'file' })).data.availability, 'decode_failed')
       }
     }
-    // WeChat media can contain a wxgf payload, which sharp cannot
-    // decode. Do not claim it is a JPEG or return an unusable cached file.
+    const hevc = execFileSync(require('ffmpeg-static'), ['-v', 'error', '-f', 'lavfi', '-i', 'color=c=red:s=32x24:r=1', '-frames:v', '1', '-c:v', 'libx265', '-x265-params', 'log-level=error:pools=1', '-f', 'hevc', 'pipe:1'], { stdio: ['ignore', 'pipe', 'ignore'] })
+    const wrapped = Buffer.concat([Buffer.from('wxgf'), Buffer.alloc(16, 7), hevc])
+    await writeFile(path, dat(wrapped, 2, Buffer.from('0123456789abcdef'), 0x53))
+    const converted = await readMedia(runtime, id, { representation: 'file' })
+    assert.equal(converted.data.availability, 'available')
+    assert.equal(converted.data.transformed, true)
+    assert.equal((await sharp(String(converted.data.local_path)).raw().toBuffer({ resolveWithObject: true })).info.width, 32)
+    assert.equal((await readMedia(runtime, id, { representation: 'image', quality: 'original' })).content?.[0].mimeType, 'image/jpeg')
+    // Malformed WXGF must not produce an unusable cached file.
     const wxgf = Buffer.concat([Buffer.from('wxgf'), Buffer.alloc(60, 7)])
     await writeFile(path, dat(wxgf, 2, Buffer.from('0123456789abcdef'), 0x53))
     const unsupported = await readMedia(runtime, id, { representation: 'file' })
     assert.equal(unsupported.data.availability, 'decode_failed')
-    assert.equal(unsupported.data.reason, 'unsupported_wxgf_image')
+    assert.equal(unsupported.data.reason, 'wxgf_conversion_failed')
     assert.equal(unsupported.data.local_path, undefined)
     await writeFile(path, dat(image, 0, Buffer.alloc(16), 0x53))
     const tools = createTools(runtime as any)
@@ -100,6 +109,19 @@ test('XOR, V1 and V2 synthetic DAT: cache paths, inline, malformed headers and m
     await rm(path)
     assert.equal((await readMedia(runtime, id, { representation: 'file' })).data.availability, 'not_downloaded', 'cache does not hide source deletion')
   } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('synthetic WXGF HEVC stream converts to a valid still JPEG', async () => {
+  const ffmpeg = require('ffmpeg-static') as string
+  const stream = execFileSync(ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'color=c=red:s=32x24:r=1', '-frames:v', '1', '-c:v', 'libx265', '-x265-params', 'log-level=error:pools=1', '-f', 'hevc', 'pipe:1'], { maxBuffer: 4 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+  const wxgf = Buffer.concat([Buffer.from('wxgf'), Buffer.alloc(16, 7), stream])
+  assert.ok(wxgfCandidates(wxgf).length)
+  const jpeg = await wxgfToJpeg(wxgf)
+  const image = await sharp(jpeg).raw().toBuffer({ resolveWithObject: true })
+  assert.equal(image.info.width, 32)
+  assert.equal(image.info.height, 24)
+  assert.ok(image.data.length > 0)
+  await assert.rejects(wxgfToJpeg(Buffer.from('wxgf broken')))
 })
 
 test('group type-6 XML, renamed files, wrong hashes, missing downloads and traversal', async () => {

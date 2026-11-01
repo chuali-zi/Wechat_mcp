@@ -6,7 +6,7 @@ export default defineConfig({
   build: {
     target: 'node22', outDir: 'build/mcp', emptyOutDir: false,
     lib: { entry: resolve(__dirname, 'mcp/server.ts'), formats: ['cjs'], fileName: () => 'server.cjs' },
-    rollupOptions: { external: [...builtinModules, /^node:/, 'sharp', 'heic-decode'], output: { inlineDynamicImports: true } },
+    rollupOptions: { external: [...builtinModules, /^node:/, 'sharp', 'heic-decode', 'ffmpeg-static'], output: { inlineDynamicImports: true } },
     minify: false
   }
 })
