@@ -91,6 +91,67 @@ for (const client of ['codex', 'claude'] as const) {
     assert.deepEqual((await f.read())[f.rootKey].weflow, edited[f.rootKey].weflow)
   })
 
+  test(`${client}: same-connection manual entries remain unowned and unchanged`, async t => {
+    const f = await fixture(t, client)
+    const manual = { ...structuredClone(f.launch), env: { ...f.launch.env, USER_SETTING: 'keep' }, enabled: false }
+    const original = { [f.rootKey]: { weflow: manual, personal: structuredClone(f.launch) } }
+    await f.put(original)
+    const result = await f.service.install(f.target)
+    assert.equal(result.success, true)
+    assert.equal(result.name, 'weflow-local')
+    assert.deepEqual((await f.read())[f.rootKey].weflow, manual)
+    assert.deepEqual((await f.read())[f.rootKey].personal, f.launch)
+    assert.equal(result.inspection?.registrations.find(item => item.name === 'weflow')?.managed, false)
+    assert.equal((await f.service.remove(f.target, 'weflow')).code, 'REGISTRATION_CHANGED')
+    assert.equal((await f.service.install(f.target)).changed, false)
+    assert.equal((await f.service.remove(f.target, result.name!)).success, true)
+    assert.deepEqual(await f.read(), original)
+  })
+
+  test(`${client}: a false-valued occupied name is preserved`, async t => {
+    const f = await fixture(t, client)
+    await f.put({ [f.rootKey]: { weflow: false } })
+    const result = await f.service.install(f.target)
+    assert.equal(result.success, true)
+    assert.equal(result.name, 'weflow-local')
+    assert.equal((await f.read())[f.rootKey].weflow, false)
+    assert.equal((await f.service.remove(f.target, result.name!)).success, true)
+    assert.deepEqual((await f.read())[f.rootKey], { weflow: false })
+  })
+
+  test(`${client}: failed first write leaves no ownership or registration behind`, async t => {
+    const f = await fixture(t, client)
+    const replace = (f.service as any).replace
+    ;(f.service as any).replace = async () => { throw new Error('fixture write failure') }
+    assert.equal((await f.service.install(f.target)).success, false)
+    assert.equal(existsSync(f.configFile), false)
+    assert.deepEqual((await f.service.inspect(f.target)).inspection?.registrations, [])
+    const stateFile = join(f.profile, 'mcp-client-setup', 'registrations.json')
+    assert.deepEqual(JSON.parse(await readFile(stateFile, 'utf8')).entries, [])
+    ;(f.service as any).replace = replace
+    const retry = await f.service.install(f.target)
+    assert.equal(retry.success, true)
+    assert.equal(retry.name, 'weflow')
+  })
+
+  test(`${client}: failed repair restores ownership and can be retried`, async t => {
+    const f = await fixture(t, client)
+    await f.service.install(f.target)
+    const before = await readFile(f.configFile, 'utf8')
+    f.launch.command = join(f.base, 'updated-runtime.exe')
+    const replace = (f.service as any).replace
+    ;(f.service as any).replace = async () => { throw Object.assign(new Error('fixture write failure'), { code: 'EACCES' }) }
+    const failed = await f.service.install(f.target)
+    assert.equal(failed.success, false)
+    assert.equal(await readFile(f.configFile, 'utf8'), before)
+    assert.equal((await f.service.inspect(f.target)).inspection?.registrations[0].managed, true)
+    ;(f.service as any).replace = replace
+    const retry = await f.service.install(f.target)
+    assert.equal(retry.success, true)
+    assert.equal(retry.name, 'weflow')
+    assert.equal((await f.read())[f.rootKey].weflow.command, f.launch.command)
+  })
+
   test(`${client}: malformed config remains byte-for-byte unchanged`, async t => {
     const f = await fixture(t, client)
     await mkdir(f.configDir, { recursive: true })
@@ -146,11 +207,13 @@ for (const client of ['codex', 'claude'] as const) {
     changed[f.rootKey].weflow.enabled = false
     changed[f.rootKey].weflow.disabled_tools = ['export_messages']
     await f.put(changed)
-    // Reuse a matching existing connection and adopt its explicit policy.
-    const other = new McpClientSetupService({ userData: join(f.base, 'setup-state-2'), home: f.home, env: {}, context: f.context, check: async () => passed() })
-    assert.equal((await other.install(f.target)).success, true)
+    // Simulate an already managed entry with an explicit client policy.
+    const stateFile = join(f.profile, 'mcp-client-setup', 'registrations.json')
+    const state = JSON.parse(await readFile(stateFile, 'utf8'))
+    state.entries[0].value = changed[f.rootKey].weflow
+    await writeFile(stateFile, JSON.stringify(state))
     f.launch.command = join(f.base, 'new-runtime.exe')
-    const result = await other.install(f.target)
+    const result = await f.service.install(f.target)
     assert.equal(result.name, 'weflow')
     const entry = (await f.read())[f.rootKey].weflow
     assert.equal(entry.command, f.launch.command)

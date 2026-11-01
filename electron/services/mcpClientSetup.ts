@@ -274,9 +274,11 @@ export class McpClientSetupService {
         const state = await this.loadState()
         const managedEntries = state.filter(entry => entry.client === target.client && samePath(entry.configFile, target.configFile) && equal(entries[entry.name], entry.value))
         const managed = managedEntries.find(entry => sameConnection(entry.value, context.launch)) || (managedEntries.length === 1 ? managedEntries[0] : undefined)
-        const externallyChanged = (key: string) => state.some(entry => entry.client === target.client && samePath(entry.configFile, target.configFile) && entry.name === key && !equal(entry.value, entries[key]))
-        let name = managed?.name || Object.keys(entries).find(key => !externallyChanged(key) && sameConnection(entries[key], context.launch)) || 'weflow'
-        if (!managed && entries[name] && (externallyChanged(name) || !sameConnection(entries[name], context.launch))) {
+        // Matching launch arguments do not establish ownership. A manually added
+        // connection can carry its own runtime, environment and client policy;
+        // adopting it would allow a later remove to delete the user's entry.
+        let name = managed?.name || 'weflow'
+        if (!managed && Object.hasOwn(entries, name)) {
           name = 'weflow-local'
           for (let suffix = 2; Object.hasOwn(entries, name); suffix++) name = `weflow-local-${suffix}`
         }
