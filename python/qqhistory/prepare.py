@@ -23,7 +23,14 @@ def verify_password(password, page, algorithm='HMAC_SHA1'):
     return hmac.compare_digest(actual, page[end + 16:end + 16 + size])
 
 
-def discover(config, seconds=20):
+def candidate_strings(block):
+    # Candidates may end at any non-printable byte, not necessarily NUL.
+    # Check entire runs so arbitrary substrings of text do not dominate the scan.
+    for match in re.finditer(rb'(?<![\x21-\x7e])(?:[\x21-\x7e]{16}|[\x21-\x7e]{32})(?![\x21-\x7e])', block):
+        yield match.group()
+
+
+def discover(config, seconds=120):
     from wxtext.windows import WindowsSource, ProcessReader
     from wxtext.keyscan import memory_chunks
     source = WindowsSource()
@@ -32,20 +39,26 @@ def discover(config, seconds=20):
         page = stream.read(4096)
     tested = set()
     deadline = time.monotonic() + seconds
+    # Focus on memory near this account or database filename first; scanning all
+    # printable process strings is both slow and prone to exhausting the budget.
+    anchors = re.compile(rb'nt_msg\.db|' + re.escape(str(config.get('uin', '')).encode('ascii')),
+                         re.IGNORECASE) if config.get('uin') else re.compile(rb'nt_msg\.db', re.I)
     for process in source.processes({'qq.exe'}):
         with source.handle(process.pid, 0x1010) as handle:
             for _, block in memory_chunks(ProcessReader(source, handle), deadline):
-                # Only full, NUL-terminated printable 32-byte passwords. No offsets,
-                # executable signatures, injection, process writes or privilege changes.
-                for match in re.finditer(rb'(?<![\x21-\x7e])([\x21-\x7e]{32})\x00', block):
-                    candidate = match[1]
-                    if time.monotonic() >= deadline or len(tested) >= 4096:
-                        raise QQError('QQ_KEY_NOT_FOUND')
-                    if candidate in tested:
-                        continue
-                    tested.add(candidate)
-                    if verify_password(candidate, page, config.get('hmac', 'HMAC_SHA1')):
-                        return candidate.decode('ascii')
+                windows = [block[max(0, m.start() - 4096):m.end() + 4096] for m in anchors.finditer(block)]
+                # Include the block for test readers and as a fallback when no path is present.
+                if not windows:
+                    windows = [block]
+                for window in windows:
+                    for candidate in candidate_strings(window):
+                        if time.monotonic() >= deadline or len(tested) >= 40000:
+                            raise QQError('QQ_KEY_NOT_FOUND')
+                        if candidate in tested:
+                            continue
+                        tested.add(candidate)
+                        if verify_password(candidate, page, config.get('hmac', 'HMAC_SHA1')):
+                            return candidate.decode('ascii')
     raise QQError('QQ_KEY_NOT_FOUND')
 
 

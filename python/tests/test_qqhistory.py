@@ -114,6 +114,17 @@ class QQTests(unittest.TestCase):
         result = query(self.db, self.config, 'read', self.args(chat_ids=['qq:123:private:u_peer']))
         self.assertIsNone(result['messages'][0]['sender_id'])
 
+    def test_unknown_peer_rows_do_not_break_listing_or_unscoped_search(self):
+        self.add(1, 'known')
+        self.db.execute('INSERT INTO group_msg_table VALUES (2,0,0,1000,0,?,NULL)', (body('unknown'),))
+        self.db.commit()
+        found = query(self.db, self.config, 'find', {})
+        self.assertEqual(len(found['chats']), 1)
+        self.assertEqual(found['unidentified_messages'], 1)
+        result = query(self.db, self.config, 'search', {'_begin': 0, '_end': 2000, 'query': {'terms': ['known']}})
+        self.assertEqual(len(result['messages']), 1)
+        self.assertEqual(result['unidentified_messages'], 1)
+
     def test_search_reports_unreadable_nonmatching_elements(self):
         self.db.execute('INSERT INTO c2c_msg_table VALUES (1,456,456,1000,0,?,NULL)',
                         (field(40800, field(45002, 2)),))
@@ -156,6 +167,27 @@ class QQTests(unittest.TestCase):
         self.assertTrue(diagnostic['success'])
         self.assertNotIn('SECRET_MESSAGE', json.dumps(diagnostic))
         self.assertNotIn('b' * 32, json.dumps(diagnostic))
+
+    def test_default_directory_uses_configured_root_then_redirected_documents(self):
+        from unittest.mock import patch
+        from qqhistory.reader import discover_db_dir
+        public = self.root / 'public'
+        ini = public / 'Documents' / 'Tencent' / 'QQ' / 'UserDataInfo.ini'
+        ini.parent.mkdir(parents=True)
+        custom = self.root / 'custom'
+        documents = self.root / 'redirected'
+        fallback = documents / 'Tencent Files' / '123' / 'nt_qq' / 'nt_db'
+        fallback.mkdir(parents=True)
+        (fallback / 'nt_msg.db').touch()
+        ini.write_text('[UserDataSet]\nUserDataSavePath=' + str(custom) + '\n')
+        with patch.dict('os.environ', {'PUBLIC': str(public)}), patch('qqhistory.reader.documents_folder', return_value=documents):
+            self.assertEqual(discover_db_dir('123'), fallback)
+            configured = custom / '123' / 'nt_qq' / 'nt_db'
+            configured.mkdir(parents=True)
+            (configured / 'nt_msg.db').touch()
+            self.assertEqual(discover_db_dir('123'), configured)
+            with self.assertRaisesRegex(QQError, 'QQ_DB_NOT_FOUND'):
+                discover_db_dir('999')
 
     def test_password_authentication_sha1_sha256_sha512(self):
         for digest in ('sha1', 'sha256', 'sha512'):
@@ -216,7 +248,8 @@ class QQMemoryTests(unittest.TestCase):
         except ImportError:
             self.skipTest('existing WeChat native-reader dependencies not installed')
         from contextlib import nullcontext
-        from qqhistory.prepare import discover
+        from qqhistory.prepare import discover, candidate_strings
+        self.assertEqual(list(candidate_strings(b'\x00' + b'0123456789abcdef' + b'\xff')), [b'0123456789abcdef'])
         password = b'0123456789abcdef0123456789abcdef'
         salt = bytes(range(16))
         key = hashlib.pbkdf2_hmac('sha512', password, salt, 4000, 32)

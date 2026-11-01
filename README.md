@@ -99,7 +99,7 @@ HEIC 原图预览使用 [heic-decode](https://github.com/catdad-experiments/heic
 
 QQ uses the same `weflow-mcp.cmd` stdio server. It does not require a prepared WeChat account. The separate tools are `qq_get_status`, `qq_find_chats`, `qq_read_messages`, and `qq_search_messages`. Their argument schemas, result envelope, half-open date ranges, and cursor-only continuations mirror the corresponding WeChat tools. Read results use normalized messages; search returns `data.hits`. QQ does not currently expose the WeChat conversation-cleaning, context, overview, export, media or roster tools. QQ GUI integration is outside this addition.
 
-1. Prepare the existing project environment, keep QQ NT logged in, and identify the **current** account directory. Usually it is `C:\Users\YOU\Documents\Tencent Files\123456\nt_qq\nt_db`; redirected Documents or custom storage may differ. Configure an explicit path rather than guessing among accounts.
+1. Prepare the existing project environment, keep QQ NT logged in, and identify the **current** account directory. Usually it is `C:\Users\YOU\Documents\Tencent Files\123456\nt_qq\nt_db`; redirected Documents or custom storage may differ. You can configure an explicit path, or omit `db_dir` to use QQ’s configured Tencent Files root and then the current Windows Documents shell folder for the specified account.
 2. Create `%APPDATA%\WeFlow-full\qq-config.json` (or set `WEFLOW_QQ_CONFIG` in the MCP client's environment):
 
    ```json

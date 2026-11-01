@@ -1,5 +1,8 @@
 """QQ NT snapshots, protobuf parsing and bounded parameterized queries."""
+import configparser
 import hashlib
+import os
+import sys
 import json
 import re
 import shutil
@@ -71,13 +74,47 @@ def parse_body(blob):
         return {'text': '', 'type': 'other', 'unresolved_elements': 1, 'parse_status': 'invalid'}
 
 
+def documents_folder():
+    if sys.platform == 'win32':
+        import ctypes
+        buffer = ctypes.create_unicode_buffer(32768)
+        if ctypes.windll.shell32.SHGetFolderPathW(None, 5, None, 0, buffer) == 0:
+            return Path(buffer.value)
+    return Path.home() / 'Documents'
+
+
+def discover_db_dir(uin):
+    """Prefer QQ's configured root when it contains this account; then Documents."""
+    roots = []
+    public = os.environ.get('PUBLIC')
+    if public:
+        ini = Path(public) / 'Documents' / 'Tencent' / 'QQ' / 'UserDataInfo.ini'
+        try:
+            settings = configparser.ConfigParser(interpolation=None)
+            settings.read(ini, encoding='utf-8-sig')
+            configured = settings.get('UserDataSet', 'UserDataSavePath', fallback='').strip()
+            if configured and Path(configured).is_absolute():
+                roots.append(Path(configured))
+        except (OSError, UnicodeError, configparser.Error):
+            pass
+    roots.append(documents_folder() / 'Tencent Files')
+    for root in roots:
+        candidate = root / uin / 'nt_qq' / 'nt_db'
+        if (candidate / 'nt_msg.db').is_file():
+            return candidate
+    raise QQError('QQ_DB_NOT_FOUND')
+
+
 def load_config(filename):
     path = Path(filename).resolve()
     try:
         raw = path.read_bytes()
         value = json.loads(raw.decode('utf-8-sig'))
-        root = Path(value['db_dir']).expanduser()
-        if not root.is_absolute() or not str(value['uin']).isdigit():
+        uin = str(value['uin'])
+        if not uin.isascii() or not uin.isdigit():
+            raise ValueError()
+        root = Path(value['db_dir']).expanduser() if value.get('db_dir') else discover_db_dir(uin)
+        if not root.is_absolute():
             raise ValueError()
         if value.get('hmac', 'HMAC_SHA1') not in ('HMAC_SHA1', 'HMAC_SHA256', 'HMAC_SHA512'):
             raise ValueError()
@@ -239,8 +276,13 @@ def query(db, config, action, args):
             FROM ({union}) GROUP BY kind, peer ORDER BY last_active DESC, kind, peer''')
         names = contact_names(config)
         chats = []
+        unidentified = 0
         for kind, peer, last, count in rows:
-            identity = chat_id(uin, kind, peer)
+            try:
+                identity = chat_id(uin, kind, peer)
+            except QQError:
+                unidentified += count
+                continue
             name = names.get(identity, peer)
             if args.get('kind', 'all') not in ('all', kind):
                 continue
@@ -253,7 +295,7 @@ def query(db, config, action, args):
         offset = args.get('_offset', 0)
         limit = args.get('limit', 20)
         return {'chats': chats[offset:offset + limit], 'has_more': len(chats) > offset + limit,
-                'position': offset + limit}
+                'position': offset + limit, 'unidentified_messages': unidentified}
     where, params = ['timestamp >= ?', 'timestamp < ?'], [args['_begin'], args['_end']]
     if args.get('chat_ids'):
         scope = []
@@ -272,7 +314,7 @@ def query(db, config, action, args):
         params.extend([timestamp, kind, int(identity)])
     sql = f'''SELECT * FROM ({union}) WHERE {' AND '.join(where)}
               ORDER BY timestamp {order}, kind {order}, CAST(id AS INTEGER) {order} LIMIT 10001'''
-    messages, position, scanned, used, unresolved = [], args.get('_position'), 0, 0, 0
+    messages, position, scanned, used, unresolved, unidentified = [], args.get('_position'), 0, 0, 0, 0
     limit, budget = args.get('limit', 500), args.get('max_chars', 120000) - 2500
     rows = db.execute(sql, params)
     more = False
@@ -280,8 +322,15 @@ def query(db, config, action, args):
         if scanned >= 10000 or len(messages) >= limit:
             more = True
             break
+        try:
+            identity_chat = chat_id(uin, kind, peer)
+        except QQError:
+            scanned += 1
+            unidentified += 1
+            position = [timestamp, kind, identity]
+            continue
         parsed = parse_body(body)
-        message = {'id': f'qq:{uin}:{kind}:{peer}:{identity}', 'chat_id': chat_id(uin, kind, peer),
+        message = {'id': f'qq:{uin}:{kind}:{peer}:{identity}', 'chat_id': identity_chat,
                    'sender_id': f'qq:{uin}:person:{sender}' if sender else None, 'sender_name': card or nickname or sender,
                    'timestamp': timestamp, 'is_self': True if direction in (1, 2) else False if direction == 0 else None,
                    **parsed}
@@ -302,4 +351,4 @@ def query(db, config, action, args):
         if match:
             used += size
             messages.append(message)
-    return {'messages': messages, 'has_more': more, 'position': position, 'scanned': scanned, 'unresolved_elements_scanned': unresolved}
+    return {'messages': messages, 'has_more': more, 'position': position, 'scanned': scanned, 'unresolved_elements_scanned': unresolved, 'unidentified_messages': unidentified}
