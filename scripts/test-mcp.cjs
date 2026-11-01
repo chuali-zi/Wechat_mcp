@@ -8,7 +8,7 @@ const root = path.resolve(__dirname, '..');
   if (!tests.length) throw new Error('No MCP tests found.');
   const out = path.join(root, 'build/mcp-tests');
   fs.mkdirSync(out, { recursive: true });
-  await build({ entryPoints: tests.map(name => path.join(root, 'tests', name)), outdir: out, outExtension: { '.js': '.cjs' }, bundle: true, platform: 'node', format: 'cjs', target: 'node22', external: ['sharp', 'heic-decode', 'esbuild'] });
+  await build({ entryPoints: tests.map(name => path.join(root, 'tests', name)), outdir: out, outExtension: { '.js': '.cjs' }, bundle: true, platform: 'node', format: 'cjs', target: 'node22', external: ['sharp', 'heic-decode', 'ffmpeg-static', 'esbuild'] });
   const result = spawnSync(process.execPath, ['--test', ...tests.map(name => path.join(out, name.replace(/\.ts$/, '.cjs')))], { cwd: root, stdio: 'inherit' });
   process.exitCode = result.status ?? 1;
 })().catch(error => { process.stderr.write(error.message + '\n'); process.exitCode = 1; });
