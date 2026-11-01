@@ -21,6 +21,7 @@ export function createMcpServer(options: RuntimeOptions, remote = false, shared?
   })
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [...TOOL_DEFINITIONS, ...QQ_TOOL_DEFINITIONS] }))
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+    if (remote && request.params.name === 'get_attachment') throw new Error('get_attachment requires client-owned local stdio')
     const progressToken = request.params._meta?.progressToken
     if (request.params.name.startsWith('qq_')) return qq.call(request.params.name, request.params.arguments || {}, extra.signal)
     return tools.call(request.params.name, request.params.arguments || {}, extra.signal,

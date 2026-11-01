@@ -1,3 +1,4 @@
+import { attachmentMetadata, type Attachment } from './attachment'
 import { mapRowsToMessagesLite } from './decode'
 import { chatId, messageId, personId } from './ids'
 
@@ -16,7 +17,7 @@ export type NormalizedMessage = {
   content_status: 'parsed' | 'partial' | 'unparsed'
   mentions: { state: 'known' | 'unknown'; person_ids: string[]; everyone: boolean }
   quote: { target_id: string | null; sender_id: string | null; text: string | null; state: 'resolved' | 'snapshot_only' | 'unresolved' } | null
-  attachment: { kind: string; title?: string; url?: string; availability: string } | null
+  attachment: Attachment | null
   system_event: string | null
 }
 
@@ -128,6 +129,6 @@ export function normalizeMessage(row: Record<string, any>, context: NormalizeCon
     id, chat_id: chatId(context.accountScope, context.sessionId), sender_id: sender ? personId(context.accountScope, sender) : null,
     is_self: isSelf, sent_at: sentAt, type: parsed.type, text: parsed.text, text_complete: true, text_part: null,
     content_status: parsed.contentStatus, mentions, quote,
-    attachment: parsed.attachment, system_event: parsed.system
+    attachment: parsed.attachment && ['image', 'file'].includes(parsed.type) ? { ...parsed.attachment, ...attachmentMetadata(raw, id, parsed.type) } : parsed.attachment, system_event: parsed.system
   }
 }

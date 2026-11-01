@@ -200,6 +200,7 @@ test('media reads a synthetic DAT image and enforces output budget and missing s
         throw Object.assign(new Error('cache empty'), { code: 'IMAGE_KEY_REQUIRED' })
       }
     }
+    await writeFile(encryptedPath, Buffer.concat([header, aesPayload]))
     const keyMissing = await readMedia(keyMissingRuntime, id, { representation: 'image' })
     assert.equal(keyMissing.data.availability, 'key_required')
 

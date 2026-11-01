@@ -301,7 +301,7 @@ function toHits(messages: any[], terms: string[], requestedFields: string[]) {
       const normalized = normalizeSearch(source as string)
       for (const term of terms) { const at = normalized.indexOf(normalizeSearch(term)); if (at >= 0) { const text = source as string; snippets.push({ field, text: text.slice(Math.max(0, at - 60), Math.min(text.length, at + term.length + 100)), offset: null }); matchedTerms.push(term); if (!fields.includes(field)) fields.push(field) } }
     }
-    return { message_id: m.id, chat_id: m.chat_id, sender_id: m.sender_id, sent_at: m.sent_at, type: m.type, snippets, matched_fields: fields, matched_terms: [...new Set(matchedTerms)], context_anchor: m.id }
+    return { message_id: m.id, chat_id: m.chat_id, sender_id: m.sender_id, sent_at: m.sent_at, type: m.type, ...(m.attachment ? { attachment: m.attachment } : {}), snippets, matched_fields: fields, matched_terms: [...new Set(matchedTerms)], context_anchor: m.id }
   })
 }
 function fitSearchHits(messages: any[], terms: string[], fields: string[], maxChars: number) {
@@ -427,7 +427,7 @@ async function scanTool(runtime: Runtime, tool: string, args: any, signal?: Abor
     const range = timeRange(args.range, new Date())
     const chats = args._globalSearch ? (args.chat_ids || []).map((id: string) => ({ id, sessionId: decodeChatId(id, conn.accountScope) })) : idSessions(conn, args.chat_ids)
     const filters: any = { direction: args.direction || 'asc', begin: range.begin, finish: range.finish, sender_ids: args.sender_ids, types: args.types, mentions: args.mentions, selfId: personId(conn.accountScope, conn.accountId), terms: args.query?.terms, operator: args.query?.operator, fields: args.query?.fields, bucket: args.bucket }
-    if ((tool === 'read_messages' || tool === 'read_conversation') && args.after_message) {
+    if ((tool === 'read_messages' || tool === 'read_conversation' || tool === 'list_attachments') && args.after_message) {
       if (args.range || chats.length !== 1) throw fail('INVALID_ARGUMENT', 'after_message 仅用于单会话，且不能与 range 同时使用。')
       const anchor = decodeMessageId(args.after_message, conn.accountScope)
       if (anchor.sessionId !== chats[0].sessionId) throw fail('INVALID_ARGUMENT', 'after_message 必须属于所选会话。')
@@ -446,7 +446,7 @@ async function scanTool(runtime: Runtime, tool: string, args: any, signal?: Abor
     state = await createScans(runtime, conn, chats, tool, scope, range, filters)
     state.filters.limit = args.limit ?? (tool === 'search_messages' ? 20 : READ_DEFAULT_LIMIT)
     state.filters.maxChars = args.max_chars ?? (tool === 'search_messages' ? 12000 : READ_DEFAULT_MAX_CHARS)
-    if (tool === 'read_messages' || tool === 'read_conversation') {
+    if (tool === 'read_messages' || tool === 'read_conversation' || tool === 'list_attachments') {
       state.filters.format = args.format || 'normalized'
       if (present) state.filters.presentation = args.presentation
       state.filters.batchSize = Math.max(100, Math.min(1000, state.filters.limit))
@@ -454,9 +454,19 @@ async function scanTool(runtime: Runtime, tool: string, args: any, signal?: Abor
     }
   }
   const token = args.cursor || cursors.start(state!, version)
+  cursors.assertTool(token, tool)
   const page = await cursors.advance<ScanState, any>(token, version, async (s) => {
     if (s.tool !== tool) throw fail('INVALID_ARGUMENT', '请使用创建该游标的同一工具续读。')
     const scanned = await scanPage(runtime, conn, s, s.filters.limit, s.filters.maxChars, signal, project ? message => project(message, s.filters.presentation) : undefined)
+    if (['read_messages', 'search_messages', 'list_attachments'].includes(tool)) {
+      const { resolveLocalAttachment } = await import('./media')
+      for (const message of scanned.sources) {
+        if (message.attachment && ['image', 'file'].includes(message.type)) {
+          const local = await resolveLocalAttachment(runtime, message, decodeMessageId(message.id, conn.accountScope).sessionId, conn.dataDir, signal)
+          Object.assign(message.attachment, { availability: local.filePath ? 'available' : 'not_downloaded', downloaded: !!local.filePath, variant: local.variant })
+        }
+      }
+    }
     const queryFreshness = await verifiedFreshness(runtime, freshness, signal)
     let messages = scanned.messages
     let sourceMessages = scanned.sources
@@ -471,7 +481,7 @@ async function scanTool(runtime: Runtime, tool: string, args: any, signal?: Abor
       const visibleIds = new Set(sourceMessages.flatMap((m: any) => [m.chat_id, m.sender_id, m.quote?.sender_id, ...(m.mentions?.person_ids || [])].filter(Boolean)))
       const chats = Object.fromEntries(Object.entries(hydrated.chats).filter(([id]) => visibleIds.has(id)))
       const people = Object.fromEntries(Object.entries(hydrated.people).filter(([id]) => visibleIds.has(id)))
-      let data = tool === 'read_messages' || tool === 'read_conversation'
+      let data = tool === 'read_messages' || tool === 'read_conversation' || tool === 'list_attachments'
         ? dataResult(runtime, conn, queryFreshness, s.filters.format === 'compact'
           ? compactMessageData(displayed, { chats, people })
           : { chats, people, messages: displayed }, coverage, displayed.length)
@@ -483,7 +493,7 @@ async function scanTool(runtime: Runtime, tool: string, args: any, signal?: Abor
     while (Array.from(JSON.stringify(built.data)).length > maxChars && messages.length) {
       const index = messages.length - 1
       const last = messages[index]
-      if ((tool === 'read_messages' || tool === 'read_conversation') && codePoints(last.text || '').length > 1) {
+      if ((tool === 'read_messages' || tool === 'read_conversation' || tool === 'list_attachments') && codePoints(last.text || '').length > 1) {
         const original = codePoints(last.text)
         const over = Array.from(JSON.stringify(built.data)).length - maxChars + 24
         if (over >= original.length) {
@@ -516,6 +526,11 @@ async function scanTool(runtime: Runtime, tool: string, args: any, signal?: Abor
   const data = page.value.data as ToolData
   if (data.coverage) { data.coverage.next_cursor = page.next; data.coverage.has_more = !!page.next }
   return data
+}
+
+export async function listAttachments(runtime: Runtime, args: any, signal?: AbortSignal) {
+  checkCursorArgs(args)
+  return scanTool(runtime, 'list_attachments', args.cursor ? args : { chat_ids: [args.chat_id], range: args.range, direction: args.direction, limit: args.limit, max_chars: args.max_chars, types: args.kind && args.kind !== 'all' ? [args.kind] : ['image', 'file'] }, signal)
 }
 
 export async function readMessages(runtime: Runtime, args: any, signal?: AbortSignal) { checkCursorArgs(args); return scanTool(runtime, 'read_messages', args, signal) }
@@ -568,6 +583,7 @@ export async function getChatOverview(runtime: Runtime, args: any, signal?: Abor
   }
   if (state) { state.filters.maxChars = args.max_chars ?? 12000; state.filters.bucketOffset = 0 }
   const token = args.cursor || cursors.start(state!, version)
+  cursors.assertTool(token, 'get_chat_overview')
   const page = await cursors.advance<ScanState, any>(token, version, async s => {
     if (s.tool !== 'get_chat_overview') throw fail('INVALID_ARGUMENT', '请使用创建该游标的同一工具续读。')
     const p = await scanOverview(runtime, conn, s, signal)

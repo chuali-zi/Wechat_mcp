@@ -13,7 +13,7 @@ import { ConversationTools, conversationRef } from '../mcp/conversation'
 
 test('MCP publishes the reading tools and bulk export with closed input objects', () => {
   assert.deepEqual(TOOL_DEFINITIONS.map(tool => tool.name), [
-    'get_status', 'get_group_members', 'find_chats', 'get_chat_overview', 'read_messages', 'search_messages', 'get_message_context', 'get_media', 'export_messages',
+    'get_status', 'get_group_members', 'find_chats', 'get_chat_overview', 'read_messages', 'search_messages', 'get_message_context', 'get_attachment', 'list_attachments', 'get_media', 'export_messages',
     'read_conversation', 'export_conversation', 'get_conversation_context',
   ])
   for (const tool of TOOL_DEFINITIONS) {
@@ -66,6 +66,7 @@ class FakeRuntime {
   async getStatus() { return { schema_version: '1', success: true, account: { id: scope, self_id: null }, timezone: 'UTC', data: {}, coverage: null, freshness: fresh, warnings: [], error: null } }
   async close() {}
   async call(method: string, payload: any = {}) {
+    if (method === 'resolveImageHardlink') return { success: false, error: '图片尚未下载到本机。' }
     if (method === 'openMessageCursor') {
       let values = [...(this.rows[payload.sessionId] || [])]
       values = values.filter(r => (!payload.beginTimestamp || r.create_time >= payload.beginTimestamp) && (!payload.endTimestamp || r.create_time <= payload.endTimestamp))
@@ -507,4 +508,28 @@ test('export never reports complete when the data version changes during reading
   assert.equal(output.coverage.scan_complete, false)
   assert.equal(JSON.parse(await readFile(output.data.files.manifest.path, 'utf8')).status, 'failed')
   assert.equal(runtime.closedCursors, 1)
+})
+
+test('attachment listing filters group messages, paginates, replays and invalidates on revision changes', async () => {
+  const runtime = new FakeRuntime()
+  const group = 'media@chatroom'
+  runtime.rows[group] = [row(group, 1, 'text'), row(group, 2, '<msg><img md5="0123456789abcdef0123456789abcdef"/></msg>', { local_type: 3 }), row(group, 3, '<appmsg><type>6</type><title>missing.pdf</title><appattach><totallen>42</totallen><fileext>pdf</fileext></appattach></appmsg>', { local_type: 49 })]
+  const { listAttachments } = await import('../mcp/query')
+  const first = await listAttachments(runtime as any, { chat_id: chatId(scope, group), limit: 1, range: { start: '2026-01-01T00:00:00Z', end: '2027-01-01T00:00:00Z' } })
+  assert.equal((first.data.messages as any[])[0].type, 'image')
+  assert.equal((first.data.messages as any[])[0].attachment.downloaded, false)
+  assert.equal(first.coverage?.has_more, true)
+  const cursor = first.coverage!.next_cursor
+  const second = await listAttachments(runtime as any, { cursor })
+  assert.equal((second.data.messages as any[])[0].type, 'file')
+  assert.equal((second.data.messages as any[])[0].attachment.size, 42)
+  assert.deepEqual(await listAttachments(runtime as any, { cursor }), second)
+  await assert.rejects(() => readMessages(runtime as any, { cursor }), { code: 'INVALID_ARGUMENT' })
+  const onlyFiles = await listAttachments(runtime as any, { chat_id: chatId(scope, group), kind: 'file', range: { start: '2026-01-01T00:00:00Z', end: '2027-01-01T00:00:00Z' } })
+  assert.equal((onlyFiles.data.messages as any[]).length, 1)
+  const hits = await searchMessages(runtime as any, { query: { terms: ['missing.pdf'] }, chat_ids: [chatId(scope, group)], range: { start: '2026-01-01T00:00:00Z', end: '2027-01-01T00:00:00Z' } })
+  assert.equal((hits.data.hits as any[])[0].attachment.id.startsWith('att:'), true)
+  assert.equal((hits.data.hits as any[])[0].attachment.downloaded, false)
+  runtime.getFreshness = async () => ({ ...fresh, revision_start: 2, revision_end: 2, snapshot_id: 'changed' })
+  await assert.rejects(() => listAttachments(runtime as any, { cursor }), { code: 'CURSOR_STALE' })
 })

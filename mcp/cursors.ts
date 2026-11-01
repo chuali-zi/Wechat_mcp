@@ -6,7 +6,7 @@ type Query = { tokens: Set<string>; pageTokens: Set<string>; touched: number; by
 /** Short-lived, opaque continuation state. A consumed token replays its original page. */
 export class CursorStore {
   private readonly entries = new Map<string, Entry<unknown>>()
-  private readonly pages = new Map<string, { value: unknown; next: string | null; queryId: string; version: string; touched: number }>()
+  private readonly pages = new Map<string, { value: unknown; next: string | null; queryId: string; version: string; tool?: string; touched: number }>()
   private readonly queries = new Map<string, Query>()
   private readonly staleTokens = new Map<string, number>()
   constructor(private readonly ttlMs = 10 * 60_000, private readonly maxTokens = 128, private readonly maxQueries = 32, private readonly maxBytes = 16 * 1024 * 1024) {}
@@ -51,10 +51,15 @@ export class CursorStore {
       this.add(result.state, version, next, entry.queryId)
     }
     const value = result.value
-    this.pages.set(token, { value, next, queryId: entry.queryId, version, touched: now })
+    this.pages.set(token, { value, next, queryId: entry.queryId, version, tool: (result.state as { tool?: string })?.tool, touched: now })
     this.queries.get(entry.queryId)?.pageTokens.add(token)
     this.entries.delete(token); query.tokens.delete(token)
     return { value, next }
+  }
+
+  assertTool(token: string, tool: string): void {
+    const source = (this.entries.get(token)?.state as { tool?: string } | undefined)?.tool ?? this.pages.get(token)?.tool
+    if (source && source !== tool) throw cursorError('INVALID_ARGUMENT', '请使用创建该游标的同一工具续读。')
   }
 
   setState<S>(token: string, state: S): void {

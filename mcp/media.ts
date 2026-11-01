@@ -1,4 +1,7 @@
-import { readFile, stat } from 'fs/promises'
+import type { NormalizedMessage } from '../shared/chat/normalize'
+import { createHash, randomUUID } from 'crypto'
+import { accountRoot, confinedFile, locateAttachment } from './attachments'
+import { readFile, stat, mkdir, writeFile, rename, rm } from 'fs/promises'
 import { join } from 'path'
 import sharp from 'sharp'
 import { decodeMessageId } from '../shared/chat/ids'
@@ -9,11 +12,12 @@ import { heicToJpeg, isHeic } from '../electron/services/heicDecoder'
 
 type Locator = ReturnType<typeof decodeMessageId>
 type Runtime = {
-  ensureConnected(signal?: AbortSignal): Promise<{ accountId: string; accountScope: string; dataDir: string; mode: string; capturedAt?: string; snapshotId?: string }>
+  options?: { userData: string }
+  ensureConnected(signal?: AbortSignal): Promise<{ accountId: string; accountScope: string; dataDir: string; mode: string; capturedAt?: string | null; snapshotId?: string | null }>
   call(method: string, payload?: Record<string, unknown>, signal?: AbortSignal, timeoutMs?: number): Promise<any>
   resourcesPath?: string
 }
-type Args = { representation?: 'metadata' | 'image' | 'text'; quality?: 'preview' | 'original' }
+type Args = { representation?: 'metadata' | 'image' | 'text' | 'file'; quality?: 'preview' | 'original' }
 type ImageBlock = { type: 'image'; data: string; mimeType: string }
 type MediaResult = { data: Record<string, unknown>; content?: ImageBlock[] }
 
@@ -57,44 +61,56 @@ async function resolveHardlink(runtime: Runtime, md5: string, accountDir: string
   }
 }
 
-async function imageData(runtime: Runtime, body: string, accountDir: string, signal?: AbortSignal): Promise<{ buffer: Buffer; mime: string; transformed: boolean } | { availability: string; reason: string }> {
+async function imageData(runtime: Runtime, body: string, accountDir: string, signal?: AbortSignal, resolvedPath?: string): Promise<{ buffer: Buffer; mime: string; transformed: boolean } | { availability: string; reason: string }> {
   const md5 = imageMd5(body)
   if (!md5) return { availability: 'not_downloaded', reason: 'image_locator_missing' }
-  const linkResponse = await resolveHardlink(runtime, md5, accountDir, signal)
-  const filePath = findPath(linkResponse?.data ?? linkResponse)
+  const linkResponse = resolvedPath ? null : await resolveHardlink(runtime, md5, accountDir, signal)
+  const filePath = resolvedPath || findPath(linkResponse?.data ?? linkResponse)
   if (!filePath) return { availability: 'not_downloaded', reason: 'local_image_missing' }
   const fileStat = await stat(filePath).catch(() => null)
   if (!fileStat?.isFile()) return { availability: 'not_downloaded', reason: 'local_image_missing' }
   if (fileStat.size > 64 * 1024 * 1024) return { availability: 'too_large', reason: 'source_exceeds_processing_limit' }
   let data: Buffer = await readFile(filePath)
   if (!/\.(?:jpe?g|png|gif|webp|bmp|heic|heif)$/i.test(filePath)) {
-    let keysResponse: any
-    try {
-      keysResponse = await runtime.call('getCachedImageKeys', { accountDir }, signal)
-    } catch (caught) {
-      const error = caught as Error & { code?: string }
-      if (error.code === 'IMAGE_KEY_REQUIRED') return { availability: 'key_required', reason: 'IMAGE_KEY_REQUIRED' }
-      throw caught
-    }
-    const keys = asRecord(keysResponse?.data ?? keysResponse)
-    if (keysResponse?.success === false || keys.verified === false || (keys.xorKey === undefined && !keys.xor_key)) {
-      return { availability: 'key_required', reason: 'IMAGE_KEY_REQUIRED' }
-    }
-    const xorKey = Number(keys.xorKey ?? keys.xor_key)
-    const aesKey = String(keys.aesKey ?? keys.aes_key ?? '')
     const version = datVersion(data)
-    const candidates: Buffer[] = []
+    let xorKey = 0
+    let aesKey = ''
+    if (version === 2) {
+      let response: any
+      try { response = await runtime.call('getCachedImageKeys', { accountDir }, signal) } catch (error: any) {
+        if (error.code === 'IMAGE_KEY_REQUIRED') return { availability: 'key_required', reason: 'IMAGE_KEY_REQUIRED' }
+        throw error
+      }
+      const keys = asRecord(response?.data ?? response)
+      if (response?.success === false || keys.verified === false || (keys.xorKey ?? keys.xor_key) == null) return { availability: 'key_required', reason: 'IMAGE_KEY_REQUIRED' }
+      xorKey = Number(keys.xorKey ?? keys.xor_key)
+      aesKey = String(keys.aesKey ?? keys.aes_key ?? '')
+    }
+    let decoded: Buffer | undefined
     try {
-      if (version === 2 && aesKey.length >= 16) candidates.push(decryptDatV4(data, xorKey, Buffer.from(aesKey, 'ascii').subarray(0, 16)))
-      else if (version !== 2) candidates.push(decryptDatV3(data, xorKey))
+      if (version === 1 || version === 2) {
+        const key = version === 1 ? Buffer.from('cfcd208495d565ef', 'ascii') : Buffer.from(aesKey, 'ascii').subarray(0, 16)
+        if (version === 1 && data.readUInt32LE(10) === 1) return { availability: 'decode_failed', reason: 'xor_key_unverified' }
+        if (version === 1 && data.readUInt32LE(10) >= 2) {
+          const tails = [[0xff, 0xd9], [0x60, 0x82], [0, 0x3b]]
+          const tail = tails.find(([a, b]) => (data[data.length - 2] ^ a) === (data[data.length - 1] ^ b))
+          if (!tail) return { availability: 'decode_failed', reason: 'xor_key_unverified' }
+          xorKey = data[data.length - 2] ^ tail[0]
+        }
+        decoded = decryptDatV4(data, xorKey, key)
+      } else {
+        for (const magic of [Buffer.from([255,216,255]), Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.from('GIF8'), Buffer.from('RIFF'), Buffer.from('BM')]) {
+          const key = data[0] ^ magic[0]
+          if (magic.every((byte, index) => (data[index] ^ key) === byte)) { decoded = decryptDatV3(data, key); break }
+        }
+      }
     } catch { return { availability: 'decode_failed', reason: 'image_decryption_failed' } }
-    const decoded = candidates.find(candidate => isHeic(candidate) || candidate[0] === 0xff || candidate.toString('ascii', 1, 4) === 'PNG' || candidate.toString('ascii', 0, 4) === 'RIFF')
     if (!decoded) return { availability: 'decode_failed', reason: 'unsupported_image_data' }
     data = decoded
   }
   let mime = data.subarray(0, 3).toString('hex') === 'ffd8ff' ? 'image/jpeg'
     : data.toString('ascii', 1, 4) === 'PNG' ? 'image/png'
-      : data.toString('ascii', 8, 12) === 'WEBP' ? 'image/webp' : isHeic(data) ? 'image/heic' : 'image/jpeg'
+      : data.toString('ascii', 8, 12) === 'WEBP' ? 'image/webp' : data.toString('ascii', 0, 3) === 'GIF' ? 'image/gif' : data.toString('ascii', 0, 2) === 'BM' ? 'image/bmp' : isHeic(data) ? 'image/heic' : 'image/jpeg'
   let transformed = false
   if (isHeic(data)) {
     try {
@@ -111,6 +127,19 @@ async function imageData(runtime: Runtime, body: string, accountDir: string, sig
   return { buffer: data, mime, transformed }
 }
 
+export async function resolveLocalAttachment(runtime: Runtime, normalized: NormalizedMessage, sessionId: string, accountDir: string, signal?: AbortSignal) {
+  accountDir = accountRoot(accountDir)
+  let filePath: string | undefined
+  if (normalized.type === 'image' && normalized.attachment?.md5) {
+    const link = await resolveHardlink(runtime, normalized.attachment!.md5!, accountDir, signal)
+    const candidate = findPath(link?.data ?? link)
+    if (candidate) filePath = await confinedFile(accountDir, candidate)
+  }
+  if (!filePath && normalized.attachment && ['image', 'file'].includes(normalized.type)) filePath = await locateAttachment(accountDir, normalized.attachment, sessionId, normalized.sent_at, signal)
+  const variant = filePath ? (/_t\.dat$/i.test(filePath) ? 'thumbnail' : /_h\.dat$/i.test(filePath) ? 'original' : 'standard') : 'unknown'
+  return { filePath, variant }
+}
+
 export async function readMedia(runtime: Runtime, messageId: string, args: Args = {}, signal?: AbortSignal): Promise<MediaResult> {
   const representation = args.representation ?? 'metadata'
   const connected = await runtime.ensureConnected(signal)
@@ -124,22 +153,30 @@ export async function readMedia(runtime: Runtime, messageId: string, args: Args 
   const body = String(mapRowsToMessagesLite([row], connected.accountId)[0]?.content ?? row.message_content ?? row.compress_content ?? '')
   const kind = normalized.type
   if (representation === 'text') return { data: { message_id: messageId, kind, availability: 'unsupported', representation, source: 'local', reason: kind === 'voice' ? 'no_verified_transcript_available' : 'no_verified_text_representation' } }
-  const md5 = imageMd5(body)
-  if (representation !== 'image') {
-    if (kind !== 'image') return result(messageId, kind, 'unsupported', 'unsupported_format', representation)
-    if (!md5) return result(messageId, kind, 'not_downloaded', 'image_locator_missing', representation)
-    const accountDir = String(row._account_dir ?? row.account_dir ?? connected.dataDir)
-    const link = await resolveHardlink(runtime, md5, accountDir, signal)
-    const filePath = findPath(link?.data ?? link)
-    const present = filePath ? await stat(filePath).then(value => value.isFile()).catch(() => false) : false
-    const extension = filePath?.split('.').pop()?.toLowerCase()
-    const mime = extension === 'png' ? 'image/png' : extension === 'webp' ? 'image/webp' : extension === 'heic' ? 'image/heic' : 'image/jpeg'
-    return { data: { message_id: messageId, kind, availability: present ? 'available' : 'not_downloaded', representation, ...(present && { mime_type: mime }), source: 'local', ...(!present && { reason: 'local_image_missing' }) } }
+  const accountDir = accountRoot(String(row._account_dir ?? row.account_dir ?? connected.dataDir))
+  const { filePath, variant } = await resolveLocalAttachment(runtime, normalized, locator.sessionId, accountDir, signal)
+  const metadata = { ...normalized.attachment, message_id: messageId, kind, availability: filePath ? 'available' : 'not_downloaded', downloaded: !!filePath, variant, representation, source: 'local' }
+  if (!['image', 'file'].includes(kind)) return result(messageId, kind, 'unsupported', 'unsupported_format', representation)
+  if (representation === 'metadata') return { data: metadata }
+  if (!filePath) return { data: { ...metadata, reason: 'local_attachment_missing_or_unverified' } }
+  if (kind === 'file') {
+    if (representation !== 'file') return result(messageId, kind, 'unsupported', 'unsupported_format', representation)
+    return { data: { ...metadata, local_path: filePath, size: (await stat(filePath)).size } }
   }
-  if (kind !== 'image') return result(messageId, kind, 'unsupported', 'unsupported_format', representation)
-  const accountDir = String(row._account_dir ?? row.account_dir ?? connected.dataDir)
-  const decoded = await imageData(runtime, body, accountDir, signal)
+  const decoded = await imageData(runtime, body, accountDir, signal, filePath)
   if ('availability' in decoded) return result(messageId, kind, decoded.availability, decoded.reason, representation)
+  if (representation === 'file') {
+    try { await sharp(decoded.buffer).metadata() } catch { return result(messageId, kind, 'decode_failed', 'unsupported_image_data', representation) }
+    if (!runtime.options?.userData) throw new Error('App data directory required')
+    const directory = join(runtime.options.userData, 'media-cache', connected.accountScope)
+    await mkdir(directory, { recursive: true })
+    const extension = decoded.mime.split('/')[1].replace('jpeg', 'jpg')
+    const path = join(directory, `${createHash('sha256').update(decoded.buffer).digest('hex')}.${extension}`)
+    const temporary = `${path}.${randomUUID()}.tmp`
+    await writeFile(temporary, decoded.buffer, { flag: 'wx', mode: 0o600 })
+    try { await rename(temporary, path) } finally { await rm(temporary, { force: true }) }
+    return { data: { ...metadata, local_path: path, mime_type: decoded.mime, size: decoded.buffer.length, transformed: decoded.transformed } }
+  }
   const quality = args.quality ?? 'preview'
   let buffer = decoded.buffer
   let width: number | undefined
@@ -158,7 +195,7 @@ export async function readMedia(runtime: Runtime, messageId: string, args: Args 
   if (buffer.length > maxBytes) return { data: { message_id: messageId, kind, availability: 'too_large', representation, quality, mime_type: decoded.mime, width, height, transformed, source: 'local', reason: 'image_exceeds_output_budget' } }
   const mime = transformed ? 'image/jpeg' : decoded.mime
   return {
-    data: { message_id: messageId, kind, availability: 'available', representation, quality, mime_type: mime, width, height, transformed, source: 'local' },
+    data: { ...metadata, message_id: messageId, kind, availability: 'available', representation, quality, mime_type: mime, width, height, transformed, source: 'local' },
     content: [{ type: 'image', data: b64(buffer), mimeType: mime }]
   }
 }
