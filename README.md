@@ -94,3 +94,62 @@ HEIC 原图预览使用 [heic-decode](https://github.com/catdad-experiments/heic
 - 分享修改后的衍生版本时，使用相同或许可允许的兼容条款。
 
 本分支沿用上游许可，不增加额外限制。上游的非商业与相同方式共享要求仍然适用，因此不能将整个衍生版本改为 MIT、Apache-2.0 或 CC0。第三方依赖与另有许可声明的组件继续遵循各自的许可证。
+
+## QQ NT on Windows (MCP, read-only)
+
+QQ uses the same `weflow-mcp.cmd` stdio server. It does not require a prepared WeChat account. The separate tools are `qq_get_status`, `qq_find_chats`, `qq_read_messages`, and `qq_search_messages`. Their argument schemas, result envelope, half-open date ranges, and cursor-only continuations mirror the corresponding WeChat tools. Read results use normalized messages; search returns `data.hits`. QQ does not currently expose the WeChat conversation-cleaning, context, overview, export, media or roster tools. QQ GUI integration is outside this addition.
+
+1. Prepare the existing project environment, keep QQ NT logged in, and identify the **current** account directory. Usually it is `C:\Users\YOU\Documents\Tencent Files\123456\nt_qq\nt_db`; redirected Documents or custom storage may differ. Configure an explicit path rather than guessing among accounts.
+2. Create `%APPDATA%\WeFlow-full\qq-config.json` (or set `WEFLOW_QQ_CONFIG` in the MCP client's environment):
+
+   ```json
+   {
+     "uin": "123456",
+     "db_dir": "C:\\Users\\YOU\\Documents\\Tencent Files\\123456\\nt_qq\\nt_db",
+     "key_file": "qq-key.json",
+     "hmac": "HMAC_SHA1"
+   }
+   ```
+
+   `key_file` is relative to the configuration file, or absolute. The file contains `{"password":"EXACT_DATABASE_PASSWORD"}`. Preserve the exact password, including punctuation and hex-looking text; do not convert it into a raw key. Use a private local file, restrict its Windows ACL to your user, and keep it out of Git. Some QQ versions need `HMAC_SHA256`; supported choices also include `HMAC_SHA512`. A decrypted fixture/export can be read without `key_file`.
+3. To try the explicit **read-only memory scan**, first omit `key_file` from the configuration, then run from the repo in PowerShell:
+
+   ```powershell
+   $env:PYTHONPATH = (Resolve-Path .\python).Path
+   .\.venv\Scripts\python.exe -m qqhistory.prepare --config "$env:APPDATA\WeFlow-full\qq-config.json" --output "$env:APPDATA\WeFlow-full\qq-key.json"
+   ```
+
+   Add `"key_file":"qq-key.json"` after success. Use `.runtime\python\python.exe` instead if that is your prepared interpreter. The scanner examines only QQ.exe processes owned by the same Windows user/session through `ReadProcessMemory`. It tries bounded, NUL-terminated printable 32-byte candidates, authenticates page 1, and validates the database before saving. It never injects, hooks, patches, rekeys, closes QQ, or prints a password. Discovery is best effort (20 seconds / 4096 candidates), not a universal extractor. A miss does not mean QQ is logged out. For other versions supply a matching password captured separately using the version-specific research links in [QQ research](docs/qq-research.md); injected hooks are not part of WeFlow's read-only path. Matching the QQ process's elevation may be necessary.
+4. Build and diagnose:
+
+   ```powershell
+   npm run build:mcp
+   .\weflow-mcp.cmd --qq-check
+   # Detailed metadata-only diagnosis, including install/process/login uncertainty:
+   .\.venv\Scripts\python.exe -m qqhistory.check --config "$env:APPDATA\WeFlow-full\qq-config.json"
+   .\weflow-mcp.cmd
+   ```
+
+   Reconnect the existing MCP client after rebuilding. Packaged builds must rebuild the Python backend too (`npm run package:win`); the frozen backend includes the QQ reader. Diagnostics report installation detection, process presence, database/schema and key verification; `login: "unknown"` is deliberate because a running process or existing history cannot prove an authenticated session. No diagnostic reads message bodies or prints keys. An already registered client can invoke `qq_get_status` directly.
+
+Start with `qq_find_chats {"query":"","kind":"all"}`, then pass the returned QQ chat IDs to `qq_read_messages`, for example:
+
+```json
+{"chat_ids":["qq:123456:private:987654"],"range":{"start":"2026-10-01T00:00:00+08:00","end":"2026-11-01T00:00:00+08:00"},"limit":500}
+```
+
+Search uses `{"query":{"terms":["meeting"],"fields":["text"]},"range":{...}}`. Each response reports `coverage.has_more` and `next_cursor`; continue with **only** `{"cursor":"..."}` on the same tool. Source or config changes return `CURSOR_STALE`; restart the original query. Unsupported `compact`, `after_message`, mention filters, quote and attachment search fields fail explicitly. Increase `max_chars` if one message cannot fit; QQ does not silently truncate its body. Search covers decoded text only, so media/unsupported elements are not searchable and must not be treated as fully read.
+
+Committed messages become visible on fresh requests without restarting MCP. Configuration/key files are reread each time. Each request copies the selected DB and WAL into a temporary directory, strips QQ's 1024-byte extension there, and opens SQLCipher with query-only SQL; recovery writes are confined to those disposable copies. Source handles are read-only. Busy/changing sources fail with `QQ_SOURCE_BUSY`; retry after activity settles. This costs temporary disk space and copying time proportional to DB size (60-second request timeout), and is conservative capture rather than an atomic filesystem snapshot. Code reload follows WeChat's existing build-and-client-reconnect behavior.
+
+Group names come from `group_info.db` (`group_list` / `group_detail_info_ver1`), private names from `profile_info.db` (`profile_info_v6`), with ID fallback when unavailable. Optional `chat_names` in configuration maps full QQ chat IDs to explicit display names. Sender nicknames are never substituted for group names. Unsupported auxiliary schemas or separate auxiliary passwords fall back to IDs. Local text only: no cloud fetch, message sending, OCR, transcription or media download; unknown protobuf elements remain visible as unresolved counts.
+
+Tests (Linux fixtures work without QQ):
+
+```powershell
+npm run build:mcp
+npm run test:mcp
+npm run test:qq
+```
+
+`test:qq` covers protobuf blobs, synthetic SQLite, real SQLCipher with the QQ header and WAL (when `sqlcipher3` is installed), exact passwords, read-only source checks, reloads and safe diagnostics. `test:mcp` includes worker integration, pagination/filter errors and actual stdio tool registration. On Windows, additionally verify the actual installed QQ schema/key, send a new message **using QQ itself**, then confirm a fresh MCP read sees it, an old cursor becomes stale, and source files are unaffected by MCP reads. Real QQ extraction and Windows file-sharing/WAL behavior have not been validated on this Linux machine.
