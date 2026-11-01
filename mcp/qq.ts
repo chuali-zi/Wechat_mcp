@@ -91,7 +91,7 @@ export class QQTools {
       output.success = true; output.account = { id: `qq:${reply.uin}`, self_id: `qq:${reply.uin}:person:${reply.uin}` }
       output.freshness = { ...output.freshness, mode: 'live', connection_id: reply.revision, captured_at: queriedAt, consistency: 'per_database' }
       output.warnings = [{ code: 'QQ_LOCAL_HISTORY_ONLY', message: 'Only locally stored history. Media, quotes and unknown protobuf elements are unresolved; no complete roster or cloud history.' }]
-      const { has_more: more, position, scanned, ...data } = reply.data
+      const { has_more: more, position, scanned, unresolved_elements_scanned: unresolved, ...data } = reply.data
       if (data.messages) data.messages = data.messages.map((m: any) => {
         const { timestamp, id, ...rest } = m
         return { ...rest, id, sent_at: new Date(timestamp * 1000).toISOString(), text_complete: true, text_part: null, content_status: m.parse_status, mentions: [], quote: null, attachment: null, system_event: null }
@@ -116,7 +116,7 @@ export class QQTools {
         output.coverage = { requested_scope: { chat_ids: args.chat_ids, range: args.range || { start: new Date(args._begin * 1000).toISOString(), end: new Date(args._end * 1000).toISOString() } },
           progress: [{ scanned: scanned || 0 }], scope_progress: { selected_chats: args.chat_ids?.length || 0, completed_chats: more ? 0 : args.chat_ids?.length || 0, remaining_chats: more ? args.chat_ids?.length || 0 : 0 },
           scan_complete: !more, returned_count: (data.messages || data.chats || []).length, has_more: !!more, next_cursor: next,
-          truncated: !!more, omissions: [], unresolved_content: { elements: (data.messages || []).reduce((n: number, m: any) => n + m.unresolved_elements, 0) } }
+          truncated: !!more, omissions: [], unresolved_content: { elements: unresolved || 0 } }
       }
       // Search mirrors the WeChat hit shape; source messages are available through read_messages.
       if (tool === 'search_messages') delete data.messages

@@ -1,6 +1,7 @@
 """QQ NT snapshots, protobuf parsing and bounded parameterized queries."""
 import hashlib
 import json
+import re
 import shutil
 import sqlite3
 import tempfile
@@ -179,8 +180,12 @@ def message_union(db):
             raise QQError('QQ_SCHEMA_UNSUPPORTED')
         name = '"40093"' if '40093' in cols else "''"
         card = '"40090"' if '40090' in cols else "''"
+        sender_fallback = '"40020"' if '40020' in cols else 'NULL'
+        peer_fallback = '"40021"' if '40021' in cols else 'NULL'
+        peer = f'CASE WHEN "40030" IS NOT NULL AND "40030" != 0 THEN CAST("40030" AS TEXT) ELSE {peer_fallback} END'
+        sender = f'CASE WHEN "40033" IS NOT NULL AND "40033" != 0 THEN CAST("40033" AS TEXT) ELSE {sender_fallback} END'
         selects.append(f'''SELECT '{kind}' kind, CAST("40001" AS TEXT) id,
-          CAST("40030" AS TEXT) peer, CAST("40033" AS TEXT) sender,
+          {peer} peer, {sender} sender,
           "40050" timestamp, "40013" direction, "40800" body, {name} nickname, {card} card
           FROM "{table}"''')
     if not selects:
@@ -189,6 +194,8 @@ def message_union(db):
 
 
 def chat_id(uin, kind, peer):
+    if not isinstance(peer, str) or not re.fullmatch(r'(?:[1-9][0-9]*|u_[A-Za-z0-9_-]+)', peer):
+        raise QQError('QQ_PEER_ID_UNAVAILABLE')
     return f'qq:{uin}:{kind}:{peer}'
 
 
@@ -252,7 +259,7 @@ def query(db, config, action, args):
         scope = []
         for identity in args['chat_ids']:
             parts = identity.split(':')
-            if len(parts) != 4 or parts[:2] != ['qq', uin] or parts[2] not in ('private', 'group') or not parts[3].isdigit():
+            if len(parts) != 4 or parts[:2] != ['qq', uin] or parts[2] not in ('private', 'group') or not re.fullmatch(r'(?:[1-9][0-9]*|u_[A-Za-z0-9_-]+)', parts[3]):
                 raise QQError('INVALID_CHAT_ID')
             scope.append('(kind=? AND peer=?)')
             params.extend(parts[2:])
@@ -265,7 +272,7 @@ def query(db, config, action, args):
         params.extend([timestamp, kind, int(identity)])
     sql = f'''SELECT * FROM ({union}) WHERE {' AND '.join(where)}
               ORDER BY timestamp {order}, kind {order}, CAST(id AS INTEGER) {order} LIMIT 10001'''
-    messages, position, scanned, used = [], args.get('_position'), 0, 0
+    messages, position, scanned, used, unresolved = [], args.get('_position'), 0, 0, 0
     limit, budget = args.get('limit', 500), args.get('max_chars', 120000) - 2500
     rows = db.execute(sql, params)
     more = False
@@ -275,7 +282,7 @@ def query(db, config, action, args):
             break
         parsed = parse_body(body)
         message = {'id': f'qq:{uin}:{kind}:{peer}:{identity}', 'chat_id': chat_id(uin, kind, peer),
-                   'sender_id': f'qq:{uin}:person:{sender}', 'sender_name': card or nickname or sender,
+                   'sender_id': f'qq:{uin}:person:{sender}' if sender else None, 'sender_name': card or nickname or sender,
                    'timestamp': timestamp, 'is_self': True if direction in (1, 2) else False if direction == 0 else None,
                    **parsed}
         match = not args.get('sender_ids') or message['sender_id'] in args['sender_ids']
@@ -290,8 +297,9 @@ def query(db, config, action, args):
             more = True
             break
         scanned += 1
+        unresolved += parsed['unresolved_elements']
         position = [timestamp, kind, identity]
         if match:
             used += size
             messages.append(message)
-    return {'messages': messages, 'has_more': more, 'position': position, 'scanned': scanned}
+    return {'messages': messages, 'has_more': more, 'position': position, 'scanned': scanned, 'unresolved_elements_scanned': unresolved}
