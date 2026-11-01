@@ -115,3 +115,38 @@ test('a backend read timeout discards the cached connection before reopening pre
     rmSync(userData, { recursive: true, force: true })
   }
 })
+
+test('live timeout policy validates the environment and leaves transport headroom', async () => {
+  const { liveTimeoutMs } = await import('../shared/liveTimeout')
+  const previous = process.env.WEFLOW_LIVE_TIMEOUT_MS
+  const root = resolve('.runtime/mcp-unit')
+  mkdirSync(root, { recursive: true })
+  const userData = mkdtempSync(join(root, 'budget-'))
+  writeFileSync(join(userData, 'WeFlow-config.json'), '{}')
+  const runtime = new McpRuntime({ userData })
+  const calls: any[] = []
+  ;(runtime as any).backend = {
+    call: async (...args: any[]) => { calls.push(args); return { success: true } },
+    dispose: () => {}, cancel: () => {}
+  }
+  try {
+    delete process.env.WEFLOW_LIVE_TIMEOUT_MS
+    await runtime.call('getSessions')
+    assert.equal(calls[0][1].timeoutMs, 30000)
+    assert.equal(calls[0][4].timeoutMs, 32000)
+    process.env.WEFLOW_LIVE_TIMEOUT_MS = '60000'
+    await runtime.call('getSessions')
+    assert.equal(calls[1][1].timeoutMs, 60000)
+    assert.equal(calls[1][4].timeoutMs, 62000)
+    await runtime.call('execQuery', {}, undefined, 1000)
+    assert.equal(calls[2][1].timeoutMs, 1000)
+    for (const invalid of ['', '0', '-1', '1.5', 'NaN', '2147481648']) {
+      assert.throws(() => liveTimeoutMs(invalid), { code: 'INVALID_ARGUMENT' })
+    }
+  } finally {
+    if (previous === undefined) delete process.env.WEFLOW_LIVE_TIMEOUT_MS
+    else process.env.WEFLOW_LIVE_TIMEOUT_MS = previous
+    await runtime.close()
+    rmSync(userData, { recursive: true, force: true })
+  }
+})

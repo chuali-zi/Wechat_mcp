@@ -36,7 +36,7 @@ test('hydrates only IDs present in messages and uses raw IDs as fallback', async
   assert.deepEqual(result.people[mentioned], { display_name: 'wxid_carol', is_self: false })
   assert.equal(calls.length, 1)
   assert.equal(calls[0].method, 'getDisplayNames')
-  assert.equal(calls[0].timeoutMs, 2000)
+  assert.equal(calls[0].timeoutMs, undefined)
   assert.deepEqual(new Set(calls[0].payload.usernames as string[]), new Set(['room@chatroom', 'wxid_unmatched', accountId, 'wxid_alice', 'wxid_bob', 'wxid_carol']))
 })
 

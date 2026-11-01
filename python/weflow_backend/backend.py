@@ -25,6 +25,7 @@ from wxtext.wal import apply_wal
 from wxtext.windows import WindowsSource, discover_data_dir_records
 from .live import connect as live_connect, data_version as live_data_version, close_all as close_live
 from .group_members import group_nicknames
+from .timeouts import live_timeout_ms
 
 
 def account_root(value=None, account_id=None):
@@ -87,7 +88,7 @@ def live_query(method):
             raise ToolError("SOURCE_REPLACED", "源数据库正在重新连接，请稍后重试。")
         own_budget = self._deadline is None
         if own_budget:
-            self.begin_request(None, 2000)
+            self.begin_request()
         try:
             result = method(self, *args, **kwargs)
             self._check_limits()
@@ -109,7 +110,8 @@ def live_query(method):
 
 
 class Backend:
-    def __init__(self, state_dir, windows=None, state=None, progress=lambda message: None):
+    def __init__(self, state_dir, windows=None, state=None, progress=lambda message: None, live_read_timeout_ms=None):
+        self.live_read_timeout_ms = live_timeout_ms(live_read_timeout_ms)
         self.state = state or StateStore(Path(state_dir))
         self.windows = windows
         self.progress = progress
@@ -625,7 +627,7 @@ class Backend:
     def begin_request(self, request_id=None, timeout_ms=None):
         self._request_id = None if request_id is None else str(request_id)
         if timeout_ms is None and self.mode == "live":
-            timeout_ms = 2000
+            timeout_ms = self.live_read_timeout_ms
         self._deadline = (time.monotonic() + max(1, int(timeout_ms)) / 1000
                           if timeout_ms else None)
         for connection in self.connections.values():
@@ -923,7 +925,7 @@ class Backend:
             # Probe on an isolated Backend so testing another account cannot
             # close the active GUI connection.
             probe = Backend(self.state.root, windows=self.windows, state=self.state,
-                            progress=self.progress)
+                            progress=self.progress, live_read_timeout_ms=self.live_read_timeout_ms)
             try:
                 probe._open_live(root)
                 return {"success": True, **probe._status_payload()}
@@ -1247,7 +1249,7 @@ class Backend:
     def getMessages(self, sessionId, limit=50, offset=0, **_):
         automatic_budget = self.mode == "live" and self._deadline is None
         if automatic_budget:
-            self.begin_request(None, 2000)
+            self.begin_request()
         requested = max(1, int(limit))
         try:
             source_limit = max(1, int(offset) + requested) if self.mode == "live" else None

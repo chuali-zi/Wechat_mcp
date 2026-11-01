@@ -37,7 +37,7 @@ export async function hydrateNames(
   const usernames = Array.from(new Set([...chatRawById.values(), ...personRawById.values()]))
   const displayMap: Record<string, string> = {}
   if (usernames.length) {
-    const response = await runtime.call('getDisplayNames', { usernames }, signal, 2000)
+    const response = await runtime.call('getDisplayNames', { usernames }, signal)
     if (response?.success === false) throw Object.assign(new Error(response.error || '无法读取联系人名称。'), { code: response.code || 'DISPLAY_NAMES_FAILED' })
     const map = response?.map ?? response?.data?.map
     if (map && typeof map === 'object') {

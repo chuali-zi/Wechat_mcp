@@ -1,3 +1,4 @@
+import { liveTimeoutMs } from '../shared/liveTimeout'
 import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { homedir } from 'node:os'
@@ -83,7 +84,7 @@ export class McpRuntime {
     }
   }
 
-  async call<T = any>(method: string, payload: Record<string, any> = {}, signal?: AbortSignal, timeoutMs = 2000): Promise<T> {
+  async call<T = any>(method: string, payload: Record<string, any> = {}, signal?: AbortSignal, timeoutMs = liveTimeoutMs()): Promise<T> {
     const run = async () => {
       if (this.closed) throw runtimeError('CANCELLED', 'MCP 服务已关闭。')
       if (signal?.aborted) throw runtimeError('CANCELLED', '操作已取消。')
@@ -110,10 +111,10 @@ export class McpRuntime {
     if (this.connection) return this.connection
     if (this.connecting) return this.connecting
     this.connecting = (async () => {
-      const selection = await this.call<any>('getPreparedSelection', { ...(this.options.dataDir ? { dataDir: this.options.dataDir } : {}) }, signal, 10000)
+      const selection = await this.call<any>('getPreparedSelection', { ...(this.options.dataDir ? { dataDir: this.options.dataDir } : {}) }, signal)
       const mode = this.options.mode || selection.savedMode || 'live'
       this.modeSource = this.options.mode ? 'argument' : selection.savedMode ? 'saved' : 'default'
-      const opened = await this.call<any>('openPreparedData', { accountDir: selection.dataDir, mode }, signal, 10000)
+      const opened = await this.call<any>('openPreparedData', { accountDir: selection.dataDir, mode }, signal)
       const owner = String(opened.accountId || selection.accountId || '')
       if (!owner || !selection.dataDir) throw runtimeError('ACCOUNT_REQUIRED', '无法确定已准备的微信账号。')
       const connection: Connection = { accountId: owner, accountScope: accountScope(owner), dataDir: selection.dataDir, mode, capturedAt: opened.capturedAt, snapshotId: opened.snapshotId }
