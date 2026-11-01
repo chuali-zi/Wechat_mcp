@@ -17,7 +17,7 @@ function result(data: ToolData, extra: Array<Record<string, unknown>> = []): Cal
 function validObject(args: unknown): args is Record<string, any> {
   return !!args && typeof args === 'object' && !Array.isArray(args)
 }
-function validate(value: any, schema: any, path = 'arguments'): string | null {
+export function validate(value: any, schema: any, path = 'arguments'): string | null {
   if (!schema || typeof schema !== 'object') return null
   if (schema.oneOf || schema.anyOf) {
     const choices = schema.oneOf || schema.anyOf

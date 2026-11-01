@@ -126,14 +126,14 @@ class WindowsSource:
             finally:
                 self.close(token)
 
-    def processes(self) -> list[Process]:
+    def processes(self, names=None) -> list[Process]:
         found = []
         with self.toolhelp(0x02) as handle:
             entry = ProcessEntry()
             entry.size = c.sizeof(entry)
             success = self.first(handle, c.byref(entry))
             while success:
-                if entry.exe.lower() in {"weixin.exe", "wechat.exe"}:
+                if entry.exe.lower() in (names if names is not None else {"weixin.exe", "wechat.exe"}):
                     # Compare token owners, not a process name or guessed account directory.
                     session_id = DWORD()
                     same_session = self.session(entry.pid, c.byref(session_id)) and session_id.value == self.current_session.value
