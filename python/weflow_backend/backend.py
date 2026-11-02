@@ -1417,7 +1417,8 @@ class Backend:
                 continue
             latest = next(self.message_stream(username, False, limit=1), None)
             if latest:
-                result.append({"username": username, "summary": latest["message_content"],
+                earliest = next(self.message_stream(username, True, limit=1), None)
+                result.append({"username": username, "first_timestamp": earliest["create_time"] if earliest else None, "summary": latest["message_content"],
                                "last_timestamp": latest["create_time"], "sort_timestamp": latest["create_time"],
                                "last_msg_type": latest["local_type"], "unread_count": 0})
         result.sort(key=lambda row: row["sort_timestamp"], reverse=True)

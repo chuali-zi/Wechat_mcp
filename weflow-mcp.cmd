@@ -1,5 +1,9 @@
 @echo off
 setlocal
+if /i "%~1"=="--ensure" (
+  node "%~dp0scripts\mcp-ensure.cjs"
+  exit /b
+)
 set "NODE_OPTIONS="
 set "NODE_PATH="
 set "PYTHONHOME="

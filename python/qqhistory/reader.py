@@ -272,12 +272,12 @@ def query(db, config, action, args):
                 'media': False, 'quotes': False}, 'tables': [t for _, t in TABLES if db.execute(
                     "SELECT 1 FROM sqlite_master WHERE name=?", (t,)).fetchone()]}
     if action == 'find':
-        rows = db.execute(f'''SELECT kind, peer, MAX(timestamp) last_active, COUNT(*) message_count
+        rows = db.execute(f'''SELECT kind, peer, MAX(timestamp) last_active, MIN(timestamp) first_seen, COUNT(*) message_count
             FROM ({union}) GROUP BY kind, peer ORDER BY last_active DESC, kind, peer''')
         names = contact_names(config)
         chats = []
         unidentified = 0
-        for kind, peer, last, count in rows:
+        for kind, peer, last, first, count in rows:
             try:
                 identity = chat_id(uin, kind, peer)
             except QQError:
@@ -290,8 +290,12 @@ def query(db, config, action, args):
                 continue
             if last < args.get('_active_since', 0):
                 continue
-            chats.append({'id': identity, 'name': name, 'kind': kind, 'last_active': last,
+            if first < args.get('_created_since', 0):
+                continue
+            chats.append({'id': identity, 'name': name, 'kind': kind, 'last_active': last, 'first_seen': first,
                           'message_count': count, 'name_source': 'contact_or_configured' if identity in names else 'id'})
+        if args.get('sort') == 'created_at':
+            chats.sort(key=lambda c: (-c['first_seen'], c['id']))
         offset = args.get('_offset', 0)
         limit = args.get('limit', 20)
         return {'chats': chats[offset:offset + limit], 'has_more': len(chats) > offset + limit,

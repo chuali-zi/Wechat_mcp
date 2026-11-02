@@ -87,6 +87,10 @@ export class QQTools {
         const begin = args.range ? Date.parse(args.range.start) : end - 86_400_000
         if (!Number.isFinite(begin) || !Number.isFinite(end) || begin > end) fail('INVALID_RANGE')
         args._begin = Math.ceil(begin / 1000); args._end = Math.ceil(end / 1000)
+        if (args.created_since) {
+          args._created_since = Date.parse(args.created_since) / 1000
+          if (!Number.isFinite(args._created_since)) fail('INVALID_ARGUMENT')
+        }
         if (args.active_since) {
           args._active_since = Date.parse(args.active_since) / 1000
           if (!Number.isFinite(args._active_since)) fail('INVALID_ARGUMENT')
@@ -104,7 +108,7 @@ export class QQTools {
         return { ...rest, id, sent_at: new Date(timestamp * 1000).toISOString(), text_complete: true, text_part: null, content_status: m.parse_status, mentions: [], quote: null, attachment: null, system_event: null }
       })
       if (data.chats) data.chats = data.chats.map((c: any) => ({ ...c, display_name: c.name,
-        last_activity: new Date(c.last_active * 1000).toISOString(), has_local_messages: true }))
+        last_activity: new Date(c.last_active * 1000).toISOString(), last_active_at: new Date(c.last_active * 1000).toISOString(), created_at: null, first_seen_at: c.first_seen ? new Date(c.first_seen * 1000).toISOString() : null, first_seen_source: c.first_seen ? 'earliest_local_message' : null, first_seen_confidence: c.first_seen ? 'observed' : null, has_local_messages: true }))
       if (tool === 'search_messages') {
         data.hits = data.messages.map((m: any) => ({ message_id: m.id, chat_id: m.chat_id, sender_id: m.sender_id,
           sent_at: m.sent_at, type: m.type, matched_fields: ['text'],

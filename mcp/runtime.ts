@@ -64,7 +64,7 @@ export class McpRuntime {
     if (status?.state === 'needs_key') {
       throw runtimeError('KEY_NOT_FOUND', '在线数据所需密钥不完整，连接尚未就绪。', '保持微信登录，使用同一配置和账号运行 WeFlow prepare --mode live，然后重试 get_status。')
     }
-    throw runtimeError('NOT_CONNECTED', '本地数据连接尚未就绪。', '稍后重试 get_status；若仍失败，运行 weflow-mcp.cmd --check 并按返回错误修复。不要另外启动后台 MCP 进程。')
+    throw runtimeError('NOT_CONNECTED', '本地数据连接尚未就绪。', '稍后重试 get_status；若仍失败，运行 weflow-mcp.cmd --ensure 并按返回状态修复。不要另外启动后台 MCP 进程。')
   }
 
   checkProfile(): void {

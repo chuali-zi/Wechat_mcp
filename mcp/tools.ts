@@ -112,7 +112,7 @@ export function createTools(runtime: McpRuntime): { call(name: string, args: unk
       }
       // Only restart a fresh read. Continuations must retain their original
       // version, and exports may already have written partial files.
-      const canRetry = !args.cursor && ['get_group_members', 'find_chats', 'read_messages', 'search_messages', 'get_chat_overview', 'get_message_context', 'get_media', 'get_attachment', 'list_attachments', 'read_conversation', 'get_conversation_context'].includes(name)
+      const canRetry = !args.cursor && ['get_status', 'get_group_members', 'find_chats', 'read_messages', 'search_messages', 'get_chat_overview', 'get_message_context', 'get_media', 'get_attachment', 'list_attachments', 'read_conversation', 'get_conversation_context'].includes(name)
       for (let attempt = 0; ; attempt++) {
         try { return await execute() } catch (error: any) {
           if (attempt === 0 && canRetry && !signal?.aborted && ['BACKEND_EXITED', 'BACKEND_STOPPED', 'BACKEND_PROTOCOL_ERROR', 'NOT_CONNECTED', 'LIVE_READ_TIMEOUT', 'CURSOR_STALE'].includes(error?.code)) continue

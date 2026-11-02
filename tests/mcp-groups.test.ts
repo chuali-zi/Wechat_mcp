@@ -64,3 +64,29 @@ test('group nickname filtering retains full summary and rejects invalid scopes',
     }
   } finally { await tools.close() }
 })
+
+test('chat time sorting, filtering and cursor retain observed provenance', async () => {
+  clearCursors()
+  const r = runtime()
+  r.call = async (method: string) => {
+    if (method === 'getContactsCompact') return { contacts: [
+      { username: 'a@chatroom', nick_name: 'topic' }, { username: 'b@chatroom', nick_name: 'topic' }, { username: 'c@chatroom', nick_name: 'topic' },
+    ] } as any
+    if (method === 'getSessions') return { sessions: [
+      { username: 'a@chatroom', last_timestamp: 300, first_timestamp: 100 },
+      { username: 'b@chatroom', last_timestamp: 200, first_timestamp: 150 },
+    ] } as any
+    throw new Error('unexpected method')
+  }
+  const first = await findChats(r, { kind: 'group', sort: 'created_at', limit: 1 })
+  const item = (first.data.chats as any[])[0]
+  assert.equal(item.id, chatId(scope, 'b@chatroom'))
+  assert.equal(item.created_at, null)
+  assert.equal(item.first_seen_at, new Date(150000).toISOString())
+  assert.equal(item.first_seen_source, 'earliest_local_message')
+  assert.equal(item.last_active_at, new Date(200000).toISOString())
+  const second = await findChats(r, { cursor: first.coverage!.next_cursor })
+  assert.equal((second.data.chats as any[])[0].id, chatId(scope, 'a@chatroom'))
+  const filtered = await findChats(r, { created_since: new Date(120000).toISOString() })
+  assert.equal((filtered.data.chats as any[]).length, 1)
+})

@@ -385,7 +385,7 @@ export async function findChats(runtime: Runtime, args: any, signal?: AbortSigna
       return { state: s, hasMore: s.index < s.items.length, value: { items: s.items.slice(start, s.index), index: s.index, total: s.items.length, scope: s.scope, freshness: s.freshness } }
     })
     filtered = tokenState.value.items; index = tokenState.value.index - filtered.length; limit = filtered.length || 10; selectedQuery = ''
-    const chats = filtered.map((x: any) => ({ id: chatId(conn.accountScope, x.raw), kind: x.kind, display_name: x.row.remark || x.row.nick_name || x.raw, remark: x.row.remark || null, alias: x.row.alias || null, match_basis: x.exact ? 'exact' : x.query ? 'partial' : 'recent_activity', last_activity: x.activeAt ? new Date(x.activeAt*1000).toISOString() : null, has_local_messages: !!x.activity }))
+    const chats = filtered.map((x: any) => ({ id: chatId(conn.accountScope, x.raw), kind: x.kind, display_name: x.row.remark || x.row.nick_name || x.raw, remark: x.row.remark || null, alias: x.row.alias || null, match_basis: x.exact ? 'exact' : x.query ? 'partial' : 'recent_activity', last_activity: x.activeAt ? new Date(x.activeAt*1000).toISOString() : null, last_active_at: x.activeAt ? new Date(x.activeAt*1000).toISOString() : null, created_at: null, first_seen_at: x.firstAt ? new Date(x.firstAt*1000).toISOString() : null, first_seen_source: x.firstAt ? 'earliest_local_message' : null, first_seen_confidence: x.firstAt ? 'observed' : null, has_local_messages: !!x.activity }))
     const coverage = { requested_scope: tokenState.value.scope, progress: [], scope_progress: { selected_chats: tokenState.value.total, completed_chats: tokenState.value.total, remaining_chats: 0 }, scan_complete: true, returned_count: chats.length, has_more: !!tokenState.next, next_cursor: tokenState.next, truncated: false, omissions: [], unresolved_content: { by_type: {}, samples: [], samples_complete: true } } as Coverage
     return dataResult(runtime, conn, tokenState.value.freshness, { chats }, coverage, chats.length)
   }
@@ -402,10 +402,12 @@ export async function findChats(runtime: Runtime, args: any, signal?: AbortSigna
     const partial = names.some(n => n.normalize('NFC').toLocaleLowerCase('und').includes(query))
     const activity = recent.get(raw)
     const activeAt = Number((activity as any)?.last_timestamp || (activity as any)?.sort_timestamp || 0)
+    const firstAt = Number((activity as any)?.first_timestamp || 0)
+    const createdSince = args.created_since ? strictTime(args.created_since).getTime() / 1000 : 0
     const since = args.active_since ? strictTime(args.active_since).getTime() / 1000 : 0
-    return { row: r, raw, kind, exact, partial, activity, query, activeAt, since }
-  }).filter((x: any) => ['group','private'].includes(x.kind) && (args.kind === undefined || args.kind === 'all' || x.kind === args.kind) && (!x.since || x.activeAt >= x.since) && (!query || x.exact || x.partial))
-    .sort((a: any,b: any) => Number(b.exact)-Number(a.exact) || b.activeAt-a.activeAt || String(a.raw).localeCompare(String(b.raw)))
+    return { row: r, raw, kind, exact, partial, activity, query, activeAt, firstAt, createdSince, since }
+  }).filter((x: any) => ['group','private'].includes(x.kind) && (args.kind === undefined || args.kind === 'all' || x.kind === args.kind) && (!x.since || x.activeAt >= x.since) && (!x.createdSince || x.firstAt >= x.createdSince) && (!query || x.exact || x.partial))
+    .sort((a: any,b: any) => (args.sort === 'created_at' ? b.firstAt-a.firstAt : Number(b.exact)-Number(a.exact) || b.activeAt-a.activeAt) || String(a.raw).localeCompare(String(b.raw)))
   limit = args.limit ?? 10
   const queryFreshness = await verifiedFreshness(runtime, fresh, signal)
   const scope = xScope(args, conn.accountId)
@@ -413,12 +415,12 @@ export async function findChats(runtime: Runtime, args: any, signal?: AbortSigna
   const initialToken = cursors.start(initialState, versionKey(fresh))
   const first = await cursors.advance<any, any>(initialToken, versionKey(fresh), async s => ({ state: s, hasMore: s.index < s.items.length, value: { items: s.items.slice(0, limit), index: limit, total: s.items.length, scope, freshness: queryFreshness } }))
   filtered = first.value.items
-  const chats = filtered.map((x: any) => ({ id: chatId(conn.accountScope, x.raw), kind: x.kind, display_name: x.row.remark || x.row.nick_name || x.raw, remark: x.row.remark || null, alias: x.row.alias || null, match_basis: x.exact ? 'exact' : query ? 'partial' : 'recent_activity', last_activity: x.activeAt ? new Date(x.activeAt*1000).toISOString() : null, has_local_messages: !!x.activity }))
+  const chats = filtered.map((x: any) => ({ id: chatId(conn.accountScope, x.raw), kind: x.kind, display_name: x.row.remark || x.row.nick_name || x.raw, remark: x.row.remark || null, alias: x.row.alias || null, match_basis: x.exact ? 'exact' : query ? 'partial' : 'recent_activity', last_activity: x.activeAt ? new Date(x.activeAt*1000).toISOString() : null, last_active_at: x.activeAt ? new Date(x.activeAt*1000).toISOString() : null, created_at: null, first_seen_at: x.firstAt ? new Date(x.firstAt*1000).toISOString() : null, first_seen_source: x.firstAt ? 'earliest_local_message' : null, first_seen_confidence: x.firstAt ? 'observed' : null, has_local_messages: !!x.activity }))
   const next = first.next
   const coverage = { requested_scope: first.value.scope, progress: [], scope_progress: { selected_chats: first.value.total, completed_chats: first.value.total, remaining_chats: 0 }, scan_complete: true, returned_count: chats.length, has_more: !!next, next_cursor: next, truncated: false, omissions: [], unresolved_content: { by_type: {}, samples: [], samples_complete: true } } as Coverage
   return dataResult(runtime, conn, first.value.freshness, { chats }, coverage, chats.length)
 }
-function xScope(args: any, account: string) { return { query: args.query || '', kind: args.kind || 'all', active_since: args.active_since || null, account } }
+function xScope(args: any, account: string) { return { query: args.query || '', kind: args.kind || 'all', active_since: args.active_since || null, created_since: args.created_since || null, sort: args.sort || 'last_active', account } }
 
 async function scanTool(runtime: Runtime, tool: string, args: any, signal?: AbortSignal, present?: MessagePresentation, project?: MessageProjection): Promise<ToolData> {
   const conn = await runtime.ensureConnected(signal); const freshness = await runtime.getFreshness(signal); const version = versionKey(freshness)

@@ -57,6 +57,16 @@ class QQTests(unittest.TestCase):
     def args(self, **extra):
         return {'_begin': 0, '_end': 2000, 'chat_ids': ['qq:123:private:456'], **extra}
 
+    def test_chat_first_seen_sort_and_filter(self):
+        self.add(1, 'one', timestamp=100, table='group_msg_table', peer=111)
+        self.add(2, 'two', timestamp=300, table='group_msg_table', peer=111)
+        self.add(3, 'three', timestamp=200, table='group_msg_table', peer=222)
+        found = query(self.db, self.config, 'find', {'kind': 'group', 'sort': 'created_at'})['chats']
+        self.assertEqual([c['first_seen'] for c in found], [200, 100])
+        self.assertEqual(found[1]['last_active'], 300)
+        filtered = query(self.db, self.config, 'find', {'_created_since': 150})['chats']
+        self.assertEqual(len(filtered), 1)
+
     def test_protobuf_exact_field_unicode_mixed_and_invalid(self):
         self.assertEqual(parse_body(body('你好🙂\nexact'))['text'], '你好🙂\nexact')
         mixed = body('hello') + field(40800, field(45002, 2) + field(45402, b'photo.jpg'))
