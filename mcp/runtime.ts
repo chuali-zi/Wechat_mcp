@@ -62,7 +62,7 @@ export class McpRuntime {
     this.revision = null
     this.invalidate()
     if (status?.state === 'needs_key') {
-      throw runtimeError('KEY_NOT_FOUND', '在线数据所需密钥不完整，连接尚未就绪。', '保持微信登录，使用同一配置和账号运行 WeFlow prepare --mode live，然后重试 get_status。')
+      throw runtimeError('KEY_NOT_FOUND', '在线数据所需密钥不完整，连接尚未就绪。', '保持微信登录，准备该账号的本地密钥后重试 get_status。')
     }
     throw runtimeError('NOT_CONNECTED', '本地数据连接尚未就绪。', '稍后重试 get_status；若仍失败，运行 weflow-mcp.cmd --ensure 并按返回状态修复。不要另外启动后台 MCP 进程。')
   }
@@ -71,7 +71,7 @@ export class McpRuntime {
     const file = join(this.options.userData, 'WeFlow-config.json')
     if (!existsSync(file)) {
       this.invalidate(); this.connection = null; this.backend.dispose()
-      throw runtimeError('PROFILE_NOT_PREPARED', '此配置尚未准备，请先运行 WeFlow prepare。', '通过现有 WeFlow 启动或 prepare 流程准备账号。')
+      throw runtimeError('PROFILE_NOT_PREPARED', '此配置尚未准备。', '准备兼容的本地账号配置和密钥。')
     }
     let value: Record<string, unknown>
     try {
@@ -158,7 +158,7 @@ export class McpRuntime {
         coverage: null, freshness, warnings: [], error: null }
     } catch (caught) {
       const error = caught as Error & { code?: string; action?: string; retryable?: boolean }
-      const action = error.action || '检查 WeFlow 的账号准备与配置；修复后重试 get_status。'
+      const action = error.action || '检查本机账号准备与配置；修复后重试 get_status。'
       return { schema_version: '1', success: false, account: null, timezone: this.timezone, data: { state: 'unconnected', recovery_actions: [action] }, coverage: null,
         freshness: { mode: 'unconnected', queried_at: new Date().toISOString(), connection_id: null, revision_start: null, revision_end: null, snapshot_id: null, captured_at: null, consistency: 'unknown' }, warnings: [],
         error: { code: error.code || 'BACKEND_ERROR', message: error.message, retryable: !!error.retryable, action } }

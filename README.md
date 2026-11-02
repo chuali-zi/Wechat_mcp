@@ -1,173 +1,35 @@
-# WeFlow
+﻿# 本地微信 + QQ MCP
 
-基于 [hicccc77/WeFlow](https://github.com/hicccc77/WeFlow) 的本地解密接入分支。WeFlow 原有界面和操作流程保留；本分支把 wxtext 的微信数据库密钥获取、认证解密和只读查询接入现有流程。
+本项目提供本地 stdio MCP 服务，读取已准备的微信和 QQ NT 本机聊天记录及微信附件；不发送消息、不提供 HTTP 服务。QQ 支持文本读取，尚未解析的媒体和内容会标明局限。服务读取本机配置和数据库；导出和媒体解码会在本机生成输出或缓存。首次读取前需要准备兼容的账号配置及密钥，服务不会自动提取密钥。
 
-## 安装
+## 安装与运行（Windows）
 
-安装指令：[installed.md](https://github.com/chuali-zi/Weflow_full/blob/main/installed.md)。把下面这段话复制给能操作本机终端的 Agent，让它完成 WeFlow 安装，并接入用户使用的 MCP 智能体或客户端：
+需要 Node.js 22+、Python 虚拟环境及对应的微信/QQ 本机数据和密钥。项目保留默认数据目录 `%APPDATA%\WeFlow-full`，包括微信配置、backend 状态和 `qq-config.json`；升级前备份这些本地数据。现有客户端配置和 `weflow-mcp.cmd` 路径继续有效。
 
-```text
-请阅读并执行 https://github.com/chuali-zi/Weflow_full/blob/main/installed.md ，帮我在本机安装 WeFlow，自动创建带图标的桌面 GUI 快捷方式，并将它的 MCP 接入我使用的智能体或 MCP 客户端。复用已有安装和配置，默认使用 live 模式，完成后验证桌面入口、CLI 与 MCP 的实际连接。需要我登录微信或选择账号时再告诉我。
+```powershell
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r python\requirements.txt
+npm install
+npm run build:mcp
+.\weflow-mcp.cmd --ensure
 ```
 
-详细的环境准备、常见报错、复杂 CLI 用法和 MCP 注册步骤均在该文件中。
+构建输出为 `build/mcp/server.cjs`。`weflow-mcp.cmd` 启动 stdio 服务；`--check` 做一次独立的微信连接检查，`--qq-check` 检查 QQ，`--ensure` 检查构建、Python、微信、QQ 及客户端配置，不启动常驻服务。检查成功后重新连接 MCP 客户端并调用 `get_status`。`--print-config` 可输出客户端配置；路径移动后需重新生成配置。不要把配置、数据库或密钥上传。
 
-日常打开 GUI：双击个人桌面的 **WeFlow Live** 图标，直接进入本地整合版的 live 实时读取模式，无需重复 prepare、退出微信或等待构建。源码版首次运行“启动 WeFlow.cmd”会创建带 WeFlow 图标的快捷方式；已经准备好环境时，也可运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\create-desktop-shortcut.ps1` 创建。快捷方式固定指向当前源码目录及 `%APPDATA%\WeFlow-full` 配置，移动项目后需重新创建。它与旧安装版的公共桌面图标分开，创建无需管理员权限。`npm start` 同样默认 live；需要离线模式时可用 `npm start -- --mode snapshot`。
+QQ 配置默认在 `%APPDATA%\WeFlow-full\qq-config.json`，也可使用 `WEFLOW_QQ_CONFIG` 指定文件。配置包含数字字符串 `uin`，可选绝对路径 `db_dir`、`key_file` 和 `hmac`；密钥文件是包含 `password` 的 JSON。未指定 `db_dir` 时按本机 QQ 数据目录查找。密钥不会出现在工具参数中。可选的显式只读密钥发现工具为 `python -m qqhistory.prepare --config <配置文件> --output <新密钥文件>`，先设置 `PYTHONPATH` 为项目的 `python` 目录；它不会由 MCP 自动调用，也不会覆盖已有文件。
 
-## MCP（聊天读取）
+微信工具先调用 `get_status` 和 `find_chats`，再使用 `read_messages`、`list_attachments` 和 `get_attachment` 等；QQ 使用 `qq_get_status`、`qq_find_chats`、`qq_read_messages`、`qq_search_messages`。工具返回的覆盖范围和未解析内容应纳入结果判断。`first_seen_at` 是最早本地消息时间，不是确定的建群时间或创建者证据。
 
-已准备的账号可以通过 `weflow-mcp.cmd` 提供给 Agent。当前包含 8 个工具：定位群聊/私聊、消息概览、成批原文读取、字面检索、上下文与引用、本机图片、连接状态和完整范围文件导出。原文读取默认 500 条、120,000 字符，可选紧凑格式；大量记录可一次导出 JSONL 与连续阅读文本。范围、预算和分析方式由调用方 Agent 选择。
-
-安装与客户端接入见 [installed.md](https://github.com/chuali-zi/Weflow_full/blob/main/installed.md)；工具调用和读取限制见 [MCP 使用说明](docs/mcp-usage.md)。CLI 的完整命令、JSON 输出和退出码见 [CLI 使用说明](docs/cli.md)。
-
-当前 GUI 的 **设置 → MCP 接入** 支持一键配置 Codex、Claude Code，并提供验证、修复与移除；使用当前已准备的账号和读取模式。支持范围和环境验证见 [图形化 MCP 接入](docs/mcp-client-setup.md)。
-
-## 接入范围
-
-| 能力 | 当前范围 |
-| --- | --- |
-| 数据目录与密钥 | 识别配置目录并按数据库校验密钥；密钥按数据库分别缓存。原有外部密钥工具配置仍由 WeFlow 使用；未配置时调用内置 wxtext。 |
-| 聊天数据库 | live 使用只读 SQLCipher 查询微信 DB/WAL；snapshot 复制、重放已提交 WAL、逐页认证解密后以只读 SQLite 查询。两者均要求完整核心消息分库。 |
-| 聊天查询 | 联系人、会话、消息分页、文本搜索、发送者识别、压缩长文本及基础统计。 |
-| 导出 | 保留 WeFlow 原有格式和入口；显式配置的第三方导出程序仍按原配置使用，内置原始 JSONL 接入可用时交给原格式转换器。 |
-| 热加载 | 内置 live 连接检测提交并失效缓存，刷新列表和当前消息窗口，处理同秒消息、修改和删除；浏览历史时保持消息锚点。 |
-| 图片 | 已接入账号 V2 图片密钥自动获取、本机附件索引和内置解密；在线聊天页自动重试晚到附件。未下载到本机的图片需要先由微信下载。 |
-| 其他能力 | 视频/语音等其他媒体、完整群成员名单、朋友圈专用查询和部分高级报表尚未完整接入或验证；不支持向微信源数据库写入。 |
-
-手动 GUI 流程会继续按原设置使用显式配置的密钥获取 `.exe`、WCDB `.dll` 或 WeLive 导出 `.exe`。CLI 的 `configure` / `prepare` / `launch` 会将目标 profile 的密钥提供程序和 WCDB 切换到内置后端，接入已经验证的 live 或 snapshot 数据源；详见 [CLI 配置说明](docs/cli.md)。
-
-## 验证状态
-
-当前后端 **30 项回归测试**通过，源码及包内资源的 Electron 在线测试验证了 20 条同秒新增、修改、删除、历史补入、滚动锚点和独立在线导出。真实微信继续运行时，live verify 读到 **411 个实际聊天会话**，源码约 2.2 秒完成；包内 CLI 同样通过，并已用 live 启动现有 profile。最终 Windows 安装包已生成，完整交互安装尚未验收。在线架构、接口和复现方法见 [热加载文档](docs/live-validation.md)。以下整库解密、大规模导出和完整性结果属于此前 snapshot 验证。
-
-已在真实微信 **4.1.13.65** 上验证数据库首页密钥：微信配置指向的 D 盘目录有 **21 / 21** 个数据库通过 HMAC 认证；旧 C 盘目录为 **0 / 18**。独立打包后端能够按微信配置选择 D 盘，且缓存的 **21** 个密钥全部通过相应数据库认证；21 个数据库均已整库解密。
-
-源码 CLI 的 snapshot `prepare` 已成功写入用户默认 `%APPDATA%\WeFlow-full` 配置（21 个数据库、411 个会话）。独立 profile 上的 `doctor`、`accounts`、`status`、`keys`、`verify`、`configure`、`sessions`、`messages`、`search` 和 `export` 命令均通过；冻结后端的 `verify` 也通过。
-
-使用真实 profile 启动原 WeFlow GUI，无需手动连接数据库或补写配置即可自动进入 `#/home`。界面列出 700 个上游会话项（其中含联系人虚拟会话；后端实际有消息的会话为 411 个），实测读取 50 条消息、搜索返回 20 条。TXT、HTML、JSON 和 WeClone CSV 导出通过；JSON 与 WeClone CSV 各包含 **8,173** 条消息。未验证通用 CSV 格式。
-
-普通数据库完整性检查通过；依赖微信专用 `MMFtsTokenizer` 的 FTS 检查作为有限检查列在 `limitedChecks`。最终冻结资源目录（`win-unpacked`）中的 CLI 配置和原 GUI 预配置测试已通过：700 个界面会话项、50 条消息、20 条搜索结果和 8,173 条导出记录；统计为 85,841 条消息，统计缓存已成功写入 profile/cache。NSIS 安装程序已生成；验证覆盖包内资源，未执行完整交互安装验收。
-
-## 本地数据
-
-运行状态和聊天副本保存在当前 Windows 用户的应用数据目录；密钥缓存由 Windows DPAPI 保护。snapshot 是明文 SQLite，应按本机聊天数据管理。live 在加密源库上执行只读查询，常规查看不生成整库明文副本；导出会生成所选内容的明文文件。
-
-首次启动生成的 `.venv`、`.runtime`、`node_modules` 等目录已加入 Git 忽略规则。
-
-## 开发与打包
-
-开发环境准备见 [installed.md](https://github.com/chuali-zi/Weflow_full/blob/main/installed.md)，更多文档见[文档导航](docs/README.md)。源码检查与构建：
+## 开发检查
 
 ```powershell
 npm run typecheck
-npm run build:app
-```
-
-生成 Windows 安装包：
-
-```powershell
-npm run package:win
-```
-
-安装包内含独立后端。上游作者信息及许可保留于 [LICENSE](LICENSE)（CC BY-NC-SA 4.0），原始上游说明见 [README.upstream.md](README.upstream.md)。接入范围和技术说明见 [docs/integrated-backend.md](docs/integrated-backend.md)。
-
-## 来源与致谢
-
-- 主界面、Electron 应用和导出格式来自 [WeFlow](https://github.com/hicccc77/WeFlow)，原作者 **cc / hicccc77**，本分支基于上游提交 [`837697b`](https://github.com/hicccc77/WeFlow/commit/837697b)。
-- 数据库密钥扫描、认证解密、WAL、快照及 DPAPI：本项目原有 `abstract_information/wxtext` 工具，现随仓库放在 `python/wxtext`。
-- 本分支由 [chuali-zi](https://github.com/chuali-zi) 维护：将本地密钥获取、解密与查询能力接入 WeFlow 原有页面及数据库接口，增加 CLI、首次启动、错误恢复和后端打包支持。
-
-感谢 **cc / hicccc77** 和 [WeFlow 的所有贡献者](https://github.com/hicccc77/WeFlow/graphs/contributors) 提供完整的聊天界面、查询与导出功能，让本分支能够在已有成果上接入本地解密和 Agent 使用流程。也感谢 SQLCipher、SQLite、Microsoft Windows API、Zstandard 等项目的公开文档，以及 wxtext 研发时使用的公开参考资料，具体链接见 [研发依据](docs/wxtext-architecture.md#研发依据)。
-
-HEIC 原图预览使用 [heic-decode](https://github.com/catdad-experiments/heic-decode)（ISC）和其依赖 [libheif-js](https://github.com/catdad-experiments/libheif-js)（LGPL-3.0），感谢这些项目的维护者。组件保留各自的许可，使用未修改的 npm 发布版本；源码和许可可在对应仓库及随包依赖中查看。
-
-本仓库是独立维护的衍生版本。上游说明原文保存在 [README.upstream.md](README.upstream.md)，其中的功能说明与下载链接对应上游版本。
-
-## 许可证
-
-本衍生版本及本分支对 WeFlow 的修改采用 **Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International（CC BY-NC-SA 4.0，署名—非商业性使用—相同方式共享）**，完整条款见 [LICENSE](LICENSE) 和 [官方许可说明](https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh-hans)。
-
-在遵守条款的前提下，可以复制、修改和分享本项目：
-
-- 保留原作者、项目来源、许可证及免责声明，并说明所做的修改。
-- 仅用于非商业目的；商业使用需要另外取得相关权利人的授权。
-- 分享修改后的衍生版本时，使用相同或许可允许的兼容条款。
-
-本分支沿用上游许可，不增加额外限制。上游的非商业与相同方式共享要求仍然适用，因此不能将整个衍生版本改为 MIT、Apache-2.0 或 CC0。第三方依赖与另有许可声明的组件继续遵循各自的许可证。
-
-## QQ NT on Windows (MCP, read-only)
-
-QQ uses the same `weflow-mcp.cmd` stdio server. It does not require a prepared WeChat account. The separate tools are `qq_get_status`, `qq_find_chats`, `qq_read_messages`, and `qq_search_messages`. Their argument schemas, result envelope, half-open date ranges, and cursor-only continuations mirror the corresponding WeChat tools. Read results use normalized messages; search returns `data.hits`. QQ does not currently expose the WeChat conversation-cleaning, context, overview, export, media or roster tools. QQ GUI integration is outside this addition.
-
-1. Prepare the existing project environment, keep QQ NT logged in, and identify the **current** account directory. Usually it is `C:\Users\YOU\Documents\Tencent Files\123456\nt_qq\nt_db`; redirected Documents or custom storage may differ. You can configure an explicit path, or omit `db_dir` to use QQ’s configured Tencent Files root and then the current Windows Documents shell folder for the specified account.
-2. Create `%APPDATA%\WeFlow-full\qq-config.json` (or set `WEFLOW_QQ_CONFIG` in the MCP client's environment):
-
-   ```json
-   {
-     "uin": "123456",
-     "db_dir": "C:\\Users\\YOU\\Documents\\Tencent Files\\123456\\nt_qq\\nt_db",
-     "key_file": "qq-key.json",
-     "hmac": "HMAC_SHA1"
-   }
-   ```
-
-   `key_file` is relative to the configuration file, or absolute. The file contains `{"password":"EXACT_DATABASE_PASSWORD"}`. Preserve the exact password, including punctuation and hex-looking text; do not convert it into a raw key. Use a private local file, restrict its Windows ACL to your user, and keep it out of Git. Some QQ versions need `HMAC_SHA256`; supported choices also include `HMAC_SHA512`. A decrypted fixture/export can be read without `key_file`.
-3. To try the explicit **read-only memory scan**, first omit `key_file` from the configuration, then run from the repo in PowerShell:
-
-   ```powershell
-   $env:PYTHONPATH = (Resolve-Path .\python).Path
-   .\.venv\Scripts\python.exe -m qqhistory.prepare --config "$env:APPDATA\WeFlow-full\qq-config.json" --output "$env:APPDATA\WeFlow-full\qq-key.json"
-   ```
-
-   Add `"key_file":"qq-key.json"` after success. Use `.runtime\python\python.exe` instead if that is your prepared interpreter. The scanner examines only QQ.exe processes owned by the same Windows user/session through `ReadProcessMemory`. It tries bounded, NUL-terminated printable 32-byte candidates, authenticates page 1, and validates the database before saving. It never injects, hooks, patches, rekeys, closes QQ, or prints a password. Discovery is best effort (20 seconds / 4096 candidates), not a universal extractor. A miss does not mean QQ is logged out. For other versions supply a matching password captured separately using the version-specific research links in [QQ research](docs/qq-research.md); injected hooks are not part of WeFlow's read-only path. Matching the QQ process's elevation may be necessary.
-4. Build and diagnose:
-
-   ```powershell
-   npm run build:mcp
-   .\weflow-mcp.cmd --qq-check
-   # Detailed metadata-only diagnosis, including install/process/login uncertainty:
-   .\.venv\Scripts\python.exe -m qqhistory.check --config "$env:APPDATA\WeFlow-full\qq-config.json"
-   .\weflow-mcp.cmd
-   ```
-
-   Reconnect the existing MCP client after rebuilding. Packaged builds must rebuild the Python backend too (`npm run package:win`); the frozen backend includes the QQ reader. Diagnostics report installation detection, process presence, database/schema and key verification; `login: "unknown"` is deliberate because a running process or existing history cannot prove an authenticated session. No diagnostic reads message bodies or prints keys. An already registered client can invoke `qq_get_status` directly.
-
-Start with `qq_find_chats {"query":"","kind":"all"}`, then pass the returned QQ chat IDs to `qq_read_messages`, for example:
-
-```json
-{"chat_ids":["qq:123456:private:987654"],"range":{"start":"2026-10-01T00:00:00+08:00","end":"2026-11-01T00:00:00+08:00"},"limit":500}
-```
-
-Search uses `{"query":{"terms":["meeting"],"fields":["text"]},"range":{...}}`. Each response reports `coverage.has_more` and `next_cursor`; continue with **only** `{"cursor":"..."}` on the same tool. Source or config changes return `CURSOR_STALE`; restart the original query. Unsupported `compact`, `after_message`, mention filters, quote and attachment search fields fail explicitly. Increase `max_chars` if one message cannot fit; QQ does not silently truncate its body. Search covers decoded text only, so media/unsupported elements are not searchable and must not be treated as fully read.
-
-Committed messages become visible on fresh requests without restarting MCP. Configuration/key files are reread each time. Each request copies the selected DB and WAL into a temporary directory, strips QQ's 1024-byte extension there, and opens SQLCipher with query-only SQL; recovery writes are confined to those disposable copies. Source handles are read-only. Busy/changing sources fail with `QQ_SOURCE_BUSY`; retry after activity settles. This costs temporary disk space and copying time proportional to DB size (60-second request timeout), and is conservative capture rather than an atomic filesystem snapshot. Code reload follows WeChat's existing build-and-client-reconnect behavior.
-
-Group names come from `group_info.db` (`group_list` / `group_detail_info_ver1`), private names from `profile_info.db` (`profile_info_v6`), with ID fallback when unavailable. Optional `chat_names` in configuration maps full QQ chat IDs to explicit display names. Sender nicknames are never substituted for group names. Unsupported auxiliary schemas or separate auxiliary passwords fall back to IDs. Local text only: no cloud fetch, message sending, OCR, transcription or media download; unknown protobuf elements remain visible as unresolved counts.
-
-Tests (Linux fixtures work without QQ):
-
-```powershell
-npm run build:mcp
 npm run test:mcp
 npm run test:qq
 ```
 
-`test:qq` covers protobuf blobs, synthetic SQLite, real SQLCipher with the QQ header and WAL (when `sqlcipher3` is installed), exact passwords, read-only source checks, reloads and safe diagnostics. `test:mcp` includes worker integration, pagination/filter errors and actual stdio tool registration. On Windows, additionally verify the actual installed QQ schema/key, send a new message **using QQ itself**, then confirm a fresh MCP read sees it, an old cursor becomes stale, and source files are unaffected by MCP reads. Real QQ extraction and Windows file-sharing/WAL behavior have not been validated on this Linux machine.
+源码入口在 `mcp/`；`shared/` 是共享模型和启动辅助代码，`python/` 是只读数据库后端及 QQ 密钥工具，`scripts/` 包含构建、测试和启动检查。构建后客户端需重新连接。
 
-## WeChat images and group files over local MCP
+## 来源与许可
 
-Use the existing local stdio connection (`weflow-mcp.cmd`, or your existing `call.cjs` wrapper). Existing tool names and arguments remain compatible.
-
-- `read_messages` and `search_messages` now expose stable `attachment.id`, image/file metadata and local availability. Compact reads keep these fields in `details.attachment`.
-- `list_attachments` lists a private chat or group's image/file messages: `{"chat_id":"<find_chats ID>","kind":"all","range":{"start":"2026-10-01T00:00:00-04:00","end":"2026-11-01T00:00:00-04:00"},"limit":100}`. Follow `coverage.next_cursor` with only `{"cursor":"..."}` on the same tool. Without a range, the normal recent-message range applies.
-- `get_attachment`: `{"attachment_id":"<attachment.id>","inline_image":true}` returns an absolute `local_path` and, for supported images, optional MCP image content. A local agent can read/open that path. Decoded images go to the selected app-data profile's `media-cache`, never the checkout. File paths refer to verified existing source files; the tool does not execute them.
-
-XOR, V1 and cached-key V2 images reuse the shared decoders. HEIC uses the existing conversion worker. Stored thumbnail/standard/high-definition variants are reported explicitly. Files require matching MD5 and size when known; missing bytes or unverifiable references remain unavailable. Fetching requires local stdio; no automatic WeChat downloads or messages are added. The cache contains plaintext media and has no automatic eviction.
-
-See [media research, design, limitations and Windows verification](docs/wechat-media-research.md). Run `npm run build:mcp` and `npm run test:mcp` for synthetic regression checks.
-
-### MCP 自诊断与聊天时间
-
-在源码目录运行 `weflow-mcp.cmd --ensure`。它在构建产物缺失时运行 `npm run build:mcp`，检查本机 Python、微信和 QQ 的只读连接，并以 JSON 输出状态；不自动获取密钥，也不修改客户端配置。客户端断开后须由客户端重新连接，然后调用 `get_status`。需要准备账号时按现有 WeFlow prepare 流程操作。`--ensure` 检查独立临时连接，不会创建常驻服务。
-
-`find_chats` 支持 `owner`、`creator` 和 `member`（人名或 person ID）、`query`、`created_since` 组合查找群。群主不一定是创建者；群成员和群主取自本地资料，可能不完整。`created_at` 返回数据库或明确创建系统消息的来源及置信度；`first_seen_at` 仅为本机最早消息，不能证明创建时间。未知创建时间时，`created_since` 和 `sort: "created_at"` 回退至首次本地消息。QQ 仅在可识别的 group_info 字段存在时提供元数据；QQ 成员和创建者筛选不受支持。
+本项目源自 [hicccc77/WeFlow](https://github.com/hicccc77/WeFlow)；完整应用快照位于本仓库的 [weflow-app 分支](https://github.com/chuali-zi/Weflow_full/tree/weflow-app)。保留原作者署名和 [LICENSE](LICENSE)；第三方 SQLCipher 许可见 [docs/licenses/sqlcipher3.txt](docs/licenses/sqlcipher3.txt)。

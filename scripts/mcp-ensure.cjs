@@ -23,6 +23,6 @@ if (result.build !== 'failed' && result.python === 'ready') {
   result.qq = probe('--qq-check');
 }
 result.success = result.build !== 'failed' && result.python === 'ready' && result.wechat === 'ready';
-result.action = result.success ? 'Reconnect the MCP client and call get_status. QQ status is reported separately.' : 'Run weflow-mcp.cmd --check --mode live --user-data "%APPDATA%\\WeFlow-full"; prepare the local account with WeFlow if needed, then reconnect the client.';
+result.action = result.success ? 'Reconnect the MCP client and call get_status. QQ status is reported separately.' : 'Run weflow-mcp.cmd --check --mode live --user-data "%APPDATA%\\WeFlow-full"; prepare the local account and keys if needed, then reconnect the client.';
 process.stdout.write(JSON.stringify(result) + '\n');
 process.exitCode = result.success ? 0 : 1;

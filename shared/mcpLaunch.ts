@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { dirname, join, resolve, delimiter } from 'node:path'
 import type { McpLaunchConfig } from './mcpSetup'
 
-/** One launch contract for the GUI, --print-config and installation checks. */
+/** Launch contract for --print-config and connection checks. */
 export function buildMcpLaunch(input: {
   executable: string
   serverPath: string
@@ -26,7 +26,7 @@ export function buildMcpLaunch(input: {
     const root = resolve(input.sourceRoot)
     const python = [join(root, '.venv', 'Scripts', 'python.exe'), join(root, '.runtime', 'python', 'python.exe'),
       join(root, '.venv', 'bin', 'python')].find(existsSync)
-    if (!python) throw new Error('项目 Python 缺失，请使用现有启动脚本准备源码环境。')
+    if (!python) throw new Error('项目 Python 缺失，请安装 Python 环境和依赖。')
     env.WEFLOW_BACKEND_ROOT = join(root, 'python')
     env.WEFLOW_PYTHON = python
   } else {

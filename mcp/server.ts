@@ -66,7 +66,7 @@ export async function startServer(options: RuntimeOptions): Promise<void> {
 
 if (require.main === module) {
   if (process.argv.includes('--help')) {
-    process.stderr.write('WeFlow MCP: weflow-mcp.cmd [--user-data DIR] [--data-dir DIR] [--mode live|snapshot] [--timezone IANA]\n--qq-check 检查 QQ 配置与只读数据库连接（不输出消息或密钥）。\n--print-config 输出可复制的客户端配置。\n--check 使用临时 stdio 客户端验证握手和数据读取，输出 JSON 并退出。\n先用 WeFlow prepare 准备账号；MCP 不自动获取密钥或创建副本。\n')
+    process.stderr.write('WeChat + QQ MCP: weflow-mcp.cmd [--user-data DIR] [--data-dir DIR] [--mode live|snapshot] [--timezone IANA]\n--qq-check 检查 QQ 配置与只读数据库连接（不输出消息或密钥）。\n--print-config 输出可复制的客户端配置。\n--check 使用临时 stdio 客户端验证握手和数据读取，输出 JSON 并退出。\n请先准备本机账号和密钥；MCP 不自动获取密钥或创建副本。\n')
   } else if (process.argv.includes('--qq-check')) {
     const args = process.argv.slice(2).filter(value => value !== '--qq-check')
     const options = parseOptions(args)
@@ -89,7 +89,7 @@ if (require.main === module) {
     process.stdout.write(JSON.stringify({ mcpServers: { weflow: config } }, null, 2) + '\n')
   } else {
     void startServer(parseOptions(process.argv.slice(2))).catch(() => {
-      process.stderr.write('WeFlow MCP 启动失败，请检查参数、运行环境和 build:mcp 输出。\n')
+      process.stderr.write('MCP 启动失败，请检查参数、运行环境和 build:mcp 输出。\n')
       process.exitCode = 1
     })
   }

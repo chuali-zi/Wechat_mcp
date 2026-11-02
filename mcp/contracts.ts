@@ -46,7 +46,7 @@ const conversationScope = {
 }
 
 export const TOOL_DEFINITIONS = [
-  { name: 'get_status', description: '查看 WeFlow 本机数据连接与准备状态。', inputSchema: obj({}), outputSchema },
+  { name: 'get_status', description: '查看微信本机数据连接与准备状态。', inputSchema: obj({}), outputSchema },
   { name: 'get_group_members', description: '列出本机群成员名单（包括未发言成员）、微信昵称 nickname、联系人备注 contact_remark、群昵称 group_nickname（俗称群备注）。group_nickname_status 为 set/not_set/unknown；支持按状态筛选和 cursor 续读，summary 统计全群。已设置不代表符合姓名/学号格式，也不代表历史上修改过；资料缺失不能判作未设置。先用 find_chats 获取群 ID。', inputSchema: paged({ chat_id: { type: 'string', minLength: 1 }, nickname_status: { type: 'string', enum: ['all', 'set', 'not_set', 'unknown'] }, limit: int(1, 10000), ...cursor }, ['chat_id']), outputSchema },
   { name: 'find_chats', description: '查找群聊或联系人。例：query=主题、kind=group、owner=人名或 person_id、created_since=时间可查某人近期创建或拥有的相关群；creator 筛选已知创建者，member 筛选成员。owner 是当前群主，不一定是创建者。created_at 的来源和置信度随结果返回；缺失时 created_since 和排序使用 first_seen_at（最早本地消息，并非建群证据）。用群 ID 限定 search_messages；支持 cursor 续读。', inputSchema: paged({ query: str, owner: str, creator: str, member: str, kind: { type: 'string', enum: ['private', 'group', 'all'] }, active_since: { type: 'string', format: 'date-time' }, created_since: { type: 'string', format: 'date-time' }, sort: { type: 'string', enum: ['last_active', 'created_at'] }, limit: int(1, 50), ...cursor }) , outputSchema },
   { name: 'get_chat_overview', description: '统计指定会话在时间范围内的消息与日期桶；可用 cursor 续读。', inputSchema: paged({ chat_ids: { type: 'array', minItems: 1, maxItems: 5, items: str }, range, bucket: { type: 'string', enum: ['day', 'week'] }, max_chars: int(1000, 40000), ...cursor }, ['chat_ids', 'range']), outputSchema },
