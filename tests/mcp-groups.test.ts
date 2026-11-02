@@ -103,8 +103,8 @@ test('group metadata, person filters and explicit creation evidence', async () =
       { username: 'a@chatroom', first_timestamp: 100, last_timestamp: 300 },
       { username: 'b@chatroom', first_timestamp: 200, last_timestamp: 300 },
     ] } as any
-    if (method === 'getGroupMemberCounts') return { success: true, map: { 'a@chatroom': 3, 'b@chatroom': 2 } } as any
-    if (method === 'execQuery') return { success: true, rows: [{ username: 'a@chatroom', room_owner: 'wxid_quiet', create_time: 250 }] } as any
+    if (method === 'execQuery') return { success: true, rows: [{ username: 'a@chatroom', room_owner: 'wxid_quiet', create_time: 250, member_count: 3 }] } as any
+    if (method === 'getChatCreationEvidence') return { success: true, entries: { 'a@chatroom': { firstAt: 100 }, 'b@chatroom': { firstAt: 200, createdAt: 220 } }, remaining: 0 } as any
     if (method === 'getGroupMembers') return { success: true, members: payload.chatroomId === 'a@chatroom' ? [{ username: 'wxid_quiet' }] : [] } as any
     if (method === 'openMessageCursor') return { success: true, cursor: 42 } as any
     if (method === 'fetchMessageBatch') return { success: true, rows: [{ local_id: 1, server_id: '1', local_type: 10000, create_time: 220, message_content: '你创建了群聊' }] } as any
@@ -119,4 +119,31 @@ test('group metadata, person filters and explicit creation evidence', async () =
   assert.equal(all[1].created_by, personId(scope, 'wxid_me'))
   assert.equal(((await findChats(r, { owner: 'Alice', member: personId(scope, 'wxid_quiet') })).data.chats as any[]).length, 1)
   assert.equal(((await findChats(r, { creator: personId(scope, 'wxid_me'), created_since: new Date(210000).toISOString() })).data.chats as any[]).length, 1)
+})
+
+
+test('default discovery skips evidence and incomplete evidence survives cursor pages', async () => {
+  clearCursors()
+  const r = runtime()
+  let evidenceCalls = 0
+  r.call = async (method: string) => {
+    if (method === 'getContactsCompact') return { contacts: [
+      { username: 'a@chatroom' }, { username: 'b@chatroom' }, { username: 'c@chatroom' },
+    ] } as any
+    if (method === 'getSessions') return { sessions: [{ username: 'a@chatroom', last_timestamp: 300 }] } as any
+    if (method === 'execQuery') return { rows: [{ username: 'a@chatroom', member_count: 4 }] } as any
+    if (method === 'getChatCreationEvidence') { evidenceCalls++; return { entries: { 'a@chatroom': { firstAt: 100 } }, remaining: 2 } as any }
+    throw new Error('unexpected expensive call')
+  }
+  const normal = await findChats(r, { limit: 1 })
+  assert.equal(evidenceCalls, 0)
+  assert.equal((normal.data.chats as any[])[0].member_count, 4)
+  const partial = await findChats(r, { sort: 'created_at', limit: 1 })
+  assert.equal(evidenceCalls, 1)
+  assert.equal(partial.coverage!.scan_complete, false)
+  assert.equal(partial.coverage!.scope_progress.remaining_chats, 2)
+  assert.equal(partial.warnings.some((w: any) => w.code === 'CREATION_EVIDENCE_INCOMPLETE'), true)
+  const next = await findChats(r, { cursor: partial.coverage!.next_cursor })
+  assert.equal(next.coverage!.scan_complete, false)
+  assert.equal(next.coverage!.scope_progress.remaining_chats, 2)
 })

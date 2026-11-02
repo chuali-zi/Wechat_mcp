@@ -1402,28 +1402,93 @@ class Backend:
     def getSessions(self, **_):
         if self.session_cache is not None:
             return {"success": True, "sessions": self.session_cache}
-        candidates = {row["username"] for row in self.contact_rows()}
-        known_tables = set()
-        for path in self.listMessageDbs()["data"]:
-            connection = self.connection(Path(path).relative_to(self.root).as_posix())
-            catalog = tables(connection)
-            known_tables.update(catalog)
-            mapping = catalog.get("name2id")
-            if mapping:
-                candidates.update(row[0] for row in connection.execute(f"SELECT user_name FROM {quoted(mapping)}") if row[0])
-        result = []
-        for username in sorted(candidates):
-            if message_table(username).lower() not in known_tables:
-                continue
-            latest = next(self.message_stream(username, False, limit=1), None)
-            if latest:
-                earliest = next(self.message_stream(username, True, limit=1), None)
-                result.append({"username": username, "first_timestamp": earliest["create_time"] if earliest else None, "summary": latest["message_content"],
-                               "last_timestamp": latest["create_time"], "sort_timestamp": latest["create_time"],
-                               "last_msg_type": latest["local_type"], "unread_count": 0})
-        result.sort(key=lambda row: row["sort_timestamp"], reverse=True)
+        connection = self.connection(self.resolve_db("session", ""))
+        catalog = tables(connection)
+        table = catalog.get("sessiontable")
+        if not table or not {"username", "last_timestamp"} <= columns(connection, table):
+            raise ToolError("UNSUPPORTED_SCHEMA", "会话数据库结构尚未适配。")
+        available = columns(connection, table)
+        selected = [name for name in ("username", "last_timestamp", "sort_timestamp", "last_msg_type", "unread_count") if name in available]
+        with self._transaction(connection):
+            result = [json_row(row) for row in connection.execute(
+                "SELECT " + ",".join(quoted(name) for name in selected) + " FROM " + quoted(table))]
         self.session_cache = result
         return {"success": True, "sessions": result}
+
+    @live_query
+    def getChatCreationEvidence(self, chatroomIds, **_):
+        # Cache only timestamps and creation attribution, never message bodies.
+        identity = hashlib.sha256((str(self.root) + "|" + str(self.owner) + "|" + str(self.meta.get("directory", "live"))).encode()).hexdigest()
+        cache_path = self.state.root / "chat-creation-cache" / (identity + ".json")
+        try:
+            cache = json.loads(cache_path.read_text(encoding="utf-8"))
+            if cache.get("version") != 1 or time.time() - cache.get("saved", 0) > 3600:
+                cache = {}
+        except (OSError, ValueError, TypeError):
+            cache = {}
+        entries = cache.get("entries", {})
+        if not isinstance(entries, dict):
+            entries = {}
+        requested = list(dict.fromkeys(str(x) for x in chatroomIds))
+        missing = [x for x in requested if x not in entries]
+        deadline = time.monotonic() + 5
+        paths = self.listMessageDbs()["data"]
+        catalogs = []
+        try:
+            for path in paths:
+                if time.monotonic() >= deadline: break
+                relative = Path(path).relative_to(self.root).as_posix()
+                connection = self.connection(relative)
+                catalogs.append((connection, tables(connection)))
+            if len(catalogs) == len(paths):
+                # Process small batches, so unfinished groups are never cached as complete.
+                for start in range(0, len(missing), 20):
+                    batch = missing[start:start + 20]
+                    values = {x: {"firstAt": 0, "createdAt": 0} for x in batch}
+                    complete = True
+                    for connection, catalog in catalogs:
+                        found = [(x, catalog.get(message_table(x).lower())) for x in batch]
+                        found = [(x, t) for x, t in found if t]
+                        if not found: continue
+                        if time.monotonic() >= deadline:
+                            complete = False; break
+                        connection.set_progress_handler(lambda: 1 if time.monotonic() >= deadline or self._progress() else 0, 1000)
+                        try:
+                            sql = " UNION ALL ".join("SELECT ? AS username, MIN(create_time) AS first_at FROM " + quoted(t) for _, t in found)
+                            for row in connection.execute(sql, [x for x, _ in found]):
+                                value = int(row[1] or 0)
+                                if value and (not values[row[0]]["firstAt"] or value < values[row[0]]["firstAt"]):
+                                    values[row[0]]["firstAt"] = value
+                            for username, table in found:
+                                if time.monotonic() >= deadline:
+                                    complete = False; break
+                                available = columns(connection, table)
+                                if not {"local_type", "message_content", "create_time"} <= available:
+                                    complete = False; break
+                                fields = "create_time, local_type, message_content" + (", WCDB_CT_message_content" if "WCDB_CT_message_content" in available else "") + (", compress_content" if "compress_content" in available else "")
+                                for row in connection.execute("SELECT " + fields + " FROM " + quoted(table) + " ORDER BY create_time ASC LIMIT 50"):
+                                    if int(row["local_type"]) & 0xffff != 10000: continue
+                                    text = decode_text(row["message_content"], row["WCDB_CT_message_content"] if "WCDB_CT_message_content" in available else None, row["compress_content"] if "compress_content" in available else None)
+                                    if re.search(r"你创建了群聊|you created (?:a |the )?group chat", text or "", re.I):
+                                        stamp = int(row["create_time"])
+                                        if not values[username]["createdAt"] or stamp < values[username]["createdAt"]:
+                                            values[username]["createdAt"] = stamp
+                                        break
+                        except Exception:
+                            self._check_limits()
+                            complete = False
+                        finally:
+                            connection.set_progress_handler(self._progress if self._request_id or self._deadline else None, 1000)
+                        if not complete: break
+                    if not complete: break
+                    entries.update(values)
+        finally:
+            if missing and entries:
+                try:
+                    atomic_write(cache_path, json.dumps({"version": 1, "saved": cache.get("saved", time.time()), "entries": entries}, separators=(",", ":")).encode())
+                except OSError:
+                    pass
+        return {"success": True, "entries": {x: entries[x] for x in requested if x in entries}, "remaining": sum(x not in entries for x in requested)}
 
     @live_query
     def stats(self, session_id, begin=0, end=0):
@@ -1522,7 +1587,7 @@ class Backend:
                   "getMessages", "openMessageCursor", "fetchMessageBatch", "closeMessageCursor",
                   "openPreparedData", "getPreparedSelection", "getMessageByLocator", "openMessageCursorAround", "getCachedImageKeys",
                   "getSessionMessageTypeStats", "searchMessages", "setMonitor", "cancel",
-                  "getGroupMemberCapabilities", "getGroupMembers"}
+                  "getGroupMemberCapabilities", "getGroupMembers", "getChatCreationEvidence"}
         if method in simple:
             return getattr(self, method)(**payload)
         if method == "isConnected":

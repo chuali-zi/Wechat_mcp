@@ -26,7 +26,7 @@ export async function checkMcpConnection(config: McpLaunchConfig, cwd = tmpdir()
     checks.tools_listed = ['get_status', 'find_chats', 'read_conversation'].every(name => listed.tools.some(tool => tool.name === name))
     if (!checks.tools_listed) throw new Error('required tools missing')
     for (const name of ['get_status', 'find_chats']) {
-      const reply = await client.callTool({ name, arguments: name === 'find_chats' ? { kind: 'private', limit: 1 } : {} }, undefined, options)
+      const reply = await client.callTool({ name, arguments: name === 'find_chats' ? { limit: 1 } : {} }, undefined, options)
       const data = reply.structuredContent as Record<string, any> | undefined
       if (reply.isError || data?.success !== true) {
         const error = data?.error || {}

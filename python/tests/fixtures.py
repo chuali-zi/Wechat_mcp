@@ -45,6 +45,11 @@ def make_account(home):
     root = home / "微信 数据" / "wxid_me_abcd" / "db_storage"
     (root / "contact").mkdir(parents=True)
     (root / "message").mkdir()
+    (root / "session").mkdir()
+    with sqlite3.connect(root / "session/session.db") as session:
+        session.execute("CREATE TABLE SessionTable(username TEXT, last_timestamp INTEGER, sort_timestamp INTEGER)")
+        session.executemany("INSERT INTO SessionTable VALUES(?,?,?)", [(name, 1700000010, 1700000010) for name in ("wxid_peer", "123@chatroom", "456@chatroom", "bulk@chatroom")])
+    session.close()
     contact = sqlite3.connect(root / "contact/contact.db")
     contact.executescript("""CREATE TABLE contact(username TEXT PRIMARY KEY, alias TEXT, nick_name TEXT, remark TEXT, local_type INTEGER);
         INSERT INTO contact VALUES('wxid_me','','自己','',1),('wxid_peer','friend','朋友','老朋友',1),('123@chatroom','','测试群','',2);
