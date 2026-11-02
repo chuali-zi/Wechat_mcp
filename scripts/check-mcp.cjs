@@ -46,7 +46,7 @@ async function main() {
   try {
     await client.connect(transport);
     const listed = await client.listTools();
-    assert.deepEqual(listed.tools.map(x => x.name), ['get_status', 'get_group_members', 'find_chats', 'get_chat_overview', 'read_messages', 'search_messages', 'get_message_context', 'get_media', 'export_messages', 'read_conversation', 'export_conversation', 'get_conversation_context']);
+    assert.deepEqual(listed.tools.map(x => x.name), ['get_status', 'get_group_members', 'find_chats', 'get_chat_overview', 'read_messages', 'search_messages', 'get_message_context', 'get_attachment', 'list_attachments', 'get_media', 'export_messages', 'read_conversation', 'export_conversation', 'get_conversation_context', 'qq_get_status', 'qq_find_chats', 'qq_read_messages', 'qq_search_messages']);
     assert.match(client.getInstructions(), /Prefer read_conversation/);
     const status = await read('get_status', {});
     assert.equal(status.freshness.mode, mode);
