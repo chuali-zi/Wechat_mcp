@@ -152,6 +152,20 @@ class QQTests(unittest.TestCase):
         self.assertEqual(result['chats'][0]['name'], 'Team')
         self.assertNotEqual(result['chats'][0]['name'], 'Alice')
 
+    def test_group_metadata_named_fields_and_filters(self):
+        self.add(1, 'group', table='group_msg_table', peer=789)
+        names = sqlite3.connect(self.root / 'group_info.db')
+        names.execute('CREATE TABLE group_list ("60001" INTEGER, "60007" TEXT, member_count INTEGER, owner_uin INTEGER, create_time INTEGER)')
+        names.execute('INSERT INTO group_list VALUES (789, ?, 12, 456, 900)', ('Group',))
+        names.commit(); names.close()
+        result = query(self.db, self.config, 'find', {'owner': '456', '_created_since': 800})['chats']
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['member_count'], 12)
+        self.assertEqual(result[0]['created_at'], 900)
+        self.assertTrue(result[0]['owner_id'].endswith(':person:456'))
+        with self.assertRaisesRegex(QQError, 'QQ_OPTION_UNSUPPORTED'):
+            query(self.db, self.config, 'find', {'member': '456'})
+
     def test_schema_budget_and_capture_mutation_fail_closed(self):
         self.add(1, 'x' * 2000)
         with self.assertRaisesRegex(QQError, 'OUTPUT_BUDGET_TOO_SMALL'):

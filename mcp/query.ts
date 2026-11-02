@@ -373,6 +373,12 @@ export async function getGroupMembers(runtime: Runtime, args: any, signal?: Abor
   return result
 }
 
+function chatResult(x: any, scope: string) {
+  const iso = (v: number) => v > 0 ? new Date(v * 1000).toISOString() : null
+  return { id: chatId(scope, x.raw), kind: x.kind, display_name: x.row.remark || x.row.nick_name || x.raw, remark: x.row.remark || null, alias: x.row.alias || null, match_basis: x.exact ? 'exact' : x.query ? 'partial' : 'recent_activity', last_activity: iso(x.activeAt), last_active_at: iso(x.activeAt), member_count: x.memberCount ?? null, owner_id: x.owner ? personId(scope, x.owner) : null, created_at: iso(x.createdAt), created_by: x.creator ? personId(scope, x.creator) : null, created_source: x.createdSource || null, created_confidence: x.createdConfidence || null, first_seen_at: iso(x.firstAt), first_seen_source: x.firstAt ? 'earliest_local_message' : null, first_seen_confidence: x.firstAt ? 'observed' : null, has_local_messages: !!x.activity }
+}
+const normPerson = (s: any) => String(s || '').trim().normalize('NFC').toLocaleLowerCase('und')
+
 export async function findChats(runtime: Runtime, args: any, signal?: AbortSignal): Promise<ToolData> {
   checkCursorArgs(args)
   const conn = await runtime.ensureConnected(signal); const fresh = await runtime.getFreshness(signal)
@@ -385,7 +391,7 @@ export async function findChats(runtime: Runtime, args: any, signal?: AbortSigna
       return { state: s, hasMore: s.index < s.items.length, value: { items: s.items.slice(start, s.index), index: s.index, total: s.items.length, scope: s.scope, freshness: s.freshness } }
     })
     filtered = tokenState.value.items; index = tokenState.value.index - filtered.length; limit = filtered.length || 10; selectedQuery = ''
-    const chats = filtered.map((x: any) => ({ id: chatId(conn.accountScope, x.raw), kind: x.kind, display_name: x.row.remark || x.row.nick_name || x.raw, remark: x.row.remark || null, alias: x.row.alias || null, match_basis: x.exact ? 'exact' : x.query ? 'partial' : 'recent_activity', last_activity: x.activeAt ? new Date(x.activeAt*1000).toISOString() : null, last_active_at: x.activeAt ? new Date(x.activeAt*1000).toISOString() : null, created_at: null, first_seen_at: x.firstAt ? new Date(x.firstAt*1000).toISOString() : null, first_seen_source: x.firstAt ? 'earliest_local_message' : null, first_seen_confidence: x.firstAt ? 'observed' : null, has_local_messages: !!x.activity }))
+    const chats = filtered.map((x: any) => chatResult(x, conn.accountScope))
     const coverage = { requested_scope: tokenState.value.scope, progress: [], scope_progress: { selected_chats: tokenState.value.total, completed_chats: tokenState.value.total, remaining_chats: 0 }, scan_complete: true, returned_count: chats.length, has_more: !!tokenState.next, next_cursor: tokenState.next, truncated: false, omissions: [], unresolved_content: { by_type: {}, samples: [], samples_complete: true } } as Coverage
     return dataResult(runtime, conn, tokenState.value.freshness, { chats }, coverage, chats.length)
   }
@@ -395,19 +401,61 @@ export async function findChats(runtime: Runtime, args: any, signal?: AbortSigna
   const sessions = Array.isArray(sessionResp?.sessions) ? sessionResp.sessions : []
   const recent = new Map(sessions.map((s: any) => [String(s.username), s]))
   const query = String(args.query || '').trim().normalize('NFC').toLocaleLowerCase('und')
+  const groups = records.filter((r: any) => String(r.username || '').endsWith('@chatroom')).map((r: any) => String(r.username))
+  const counts = await runtime.call('getGroupMemberCounts', { chatroomIds: groups }, signal).catch(() => null)
+  const countRows = await runtime.call('execQuery', { kind: 'contact', path: null, sql: 'SELECT r.username, COUNT(m.member_id) AS member_count FROM chat_room r JOIN chatroom_member m ON m.room_id = r.id GROUP BY r.id, r.username' }, signal).catch(() => null)
+  const countMap = new Map<string, number>((countRows?.rows || []).map((r: any) => [String(r.username), Number(r.member_count)]))
+  const rooms = await runtime.call('execQuery', { kind: 'contact', path: null, sql: 'SELECT * FROM chat_room' }, signal).catch(() => null)
+  const roomMap = new Map<string, any>((rooms?.rows || []).map((r: any) => [String(r.username || r.chatroom_id || r.chat_room_name || ''), r]))
+  const contacts = new Map<string, any>(records.map((r: any) => [String(r.username || ''), r]))
+  const matchPerson = (raw: string, q: string) => {
+    const c: any = contacts.get(raw) || {}
+    return [raw, personId(conn.accountScope, raw), c.nick_name, c.remark, c.alias].some(v => normPerson(v).includes(q))
+  }
+  const createdSince = args.created_since ? strictTime(args.created_since).getTime() / 1000 : 0
+  const since = args.active_since ? strictTime(args.active_since).getTime() / 1000 : 0
   filtered = records.map((r: any) => {
     const raw = String(r.username || ''), kind = raw.includes('@chatroom') ? 'group' : r.local_type === 1 ? 'private' : 'other'
     const names = [r.remark, r.nick_name, r.alias, raw].filter(Boolean).map(String)
-    const exact = names.some(n => n.normalize('NFC').toLocaleLowerCase('und') === query)
-    const partial = names.some(n => n.normalize('NFC').toLocaleLowerCase('und').includes(query))
-    const activity = recent.get(raw)
-    const activeAt = Number((activity as any)?.last_timestamp || (activity as any)?.sort_timestamp || 0)
-    const firstAt = Number((activity as any)?.first_timestamp || 0)
-    const createdSince = args.created_since ? strictTime(args.created_since).getTime() / 1000 : 0
-    const since = args.active_since ? strictTime(args.active_since).getTime() / 1000 : 0
-    return { row: r, raw, kind, exact, partial, activity, query, activeAt, firstAt, createdSince, since }
-  }).filter((x: any) => ['group','private'].includes(x.kind) && (args.kind === undefined || args.kind === 'all' || x.kind === args.kind) && (!x.since || x.activeAt >= x.since) && (!x.createdSince || x.firstAt >= x.createdSince) && (!query || x.exact || x.partial))
-    .sort((a: any,b: any) => (args.sort === 'created_at' ? b.firstAt-a.firstAt : Number(b.exact)-Number(a.exact) || b.activeAt-a.activeAt) || String(a.raw).localeCompare(String(b.raw)))
+    const exact = names.some(n => normPerson(n) === query), partial = names.some(n => normPerson(n).includes(query))
+    const activity: any = recent.get(raw), room: any = roomMap.get(raw) || {}
+    const activeAt = Number(activity?.last_timestamp || activity?.sort_timestamp || 0), firstAt = Number(activity?.first_timestamp || 0)
+    const owner = String(room.room_owner || room.owner || room.owner_id || room.chatroom_owner || '')
+    const timeField = ['create_time', 'create_timestamp', 'created_at'].find(k => Number(room[k]) > 0 && Number(room[k]) < 1e11)
+    const createdAt = timeField ? Number(room[timeField]) : 0
+    return { row: r, raw, kind, exact, partial, activity, query, activeAt, firstAt, owner, memberCount: counts?.map?.[raw] ?? countMap.get(raw) ?? null, createdAt, createdSource: timeField ? `chat_room.${timeField}` : null, createdConfidence: createdAt ? 'database' : null, creator: '' }
+  }).filter((x: any) => ['group','private'].includes(x.kind) && (args.kind === undefined || args.kind === 'all' || x.kind === args.kind) && (!since || x.activeAt >= since) && (!query || x.exact || x.partial))
+  const ownerQuery = normPerson(args.owner), memberQuery = normPerson(args.member), creatorQuery = normPerson(args.creator)
+  const enriched: any[] = []
+  for (const x of filtered) {
+    if (x.kind === 'group') {
+      if (ownerQuery && (!x.owner || !matchPerson(x.owner, ownerQuery))) continue
+      if (memberQuery) {
+        const roster = await runtime.call('getGroupMembers', { chatroomId: x.raw }, signal).catch(() => null)
+        if (!roster?.success || !roster.members?.some((m: any) => matchPerson(String(m.username || ''), memberQuery) || [m.nickname, m.remark, m.groupNickname].some(v => normPerson(v).includes(memberQuery)))) continue
+      }
+      if (!x.createdAt && x.firstAt) {
+        const opened = await runtime.call('openMessageCursor', { sessionId: x.raw, batchSize: 50, ascending: true, beginTimestamp: 0, endTimestamp: 0 }, signal).catch(() => null)
+        if (opened?.success) {
+          try {
+            const batch = await runtime.call('fetchMessageBatch', { cursor: opened.cursor }, signal)
+            for (const row of batch?.rows || []) {
+              let m: ReturnType<typeof normalizeMessage>
+              try { m = normalizeMessage(row, { accountId: conn.accountId, accountScope: conn.accountScope, sessionId: x.raw }) } catch { continue }
+              if (m.type !== 'system') continue
+              if (/你创建了群聊|you created (?:a |the )?group chat/i.test(m.text)) {
+                x.createdAt = Date.parse(m.sent_at) / 1000; x.creator = conn.accountId; x.createdSource = 'system_message_creation'; x.createdConfidence = 'high'; break
+              }
+            }
+          } finally { await runtime.call('closeMessageCursor', { cursor: opened.cursor }, signal).catch(() => null) }
+        }
+      }
+    } else if (ownerQuery || memberQuery || creatorQuery) continue
+    if (creatorQuery && (!x.creator || !matchPerson(x.creator, creatorQuery))) continue
+    if (createdSince && (x.createdAt || x.firstAt) < createdSince) continue
+    enriched.push(x)
+  }
+  filtered = enriched.sort((a: any,b: any) => (args.sort === 'created_at' ? (b.createdAt || b.firstAt)-(a.createdAt || a.firstAt) : Number(b.exact)-Number(a.exact) || b.activeAt-a.activeAt) || String(a.raw).localeCompare(String(b.raw)))
   limit = args.limit ?? 10
   const queryFreshness = await verifiedFreshness(runtime, fresh, signal)
   const scope = xScope(args, conn.accountId)
@@ -415,12 +463,12 @@ export async function findChats(runtime: Runtime, args: any, signal?: AbortSigna
   const initialToken = cursors.start(initialState, versionKey(fresh))
   const first = await cursors.advance<any, any>(initialToken, versionKey(fresh), async s => ({ state: s, hasMore: s.index < s.items.length, value: { items: s.items.slice(0, limit), index: limit, total: s.items.length, scope, freshness: queryFreshness } }))
   filtered = first.value.items
-  const chats = filtered.map((x: any) => ({ id: chatId(conn.accountScope, x.raw), kind: x.kind, display_name: x.row.remark || x.row.nick_name || x.raw, remark: x.row.remark || null, alias: x.row.alias || null, match_basis: x.exact ? 'exact' : query ? 'partial' : 'recent_activity', last_activity: x.activeAt ? new Date(x.activeAt*1000).toISOString() : null, last_active_at: x.activeAt ? new Date(x.activeAt*1000).toISOString() : null, created_at: null, first_seen_at: x.firstAt ? new Date(x.firstAt*1000).toISOString() : null, first_seen_source: x.firstAt ? 'earliest_local_message' : null, first_seen_confidence: x.firstAt ? 'observed' : null, has_local_messages: !!x.activity }))
+  const chats = filtered.map((x: any) => chatResult(x, conn.accountScope))
   const next = first.next
   const coverage = { requested_scope: first.value.scope, progress: [], scope_progress: { selected_chats: first.value.total, completed_chats: first.value.total, remaining_chats: 0 }, scan_complete: true, returned_count: chats.length, has_more: !!next, next_cursor: next, truncated: false, omissions: [], unresolved_content: { by_type: {}, samples: [], samples_complete: true } } as Coverage
   return dataResult(runtime, conn, first.value.freshness, { chats }, coverage, chats.length)
 }
-function xScope(args: any, account: string) { return { query: args.query || '', kind: args.kind || 'all', active_since: args.active_since || null, created_since: args.created_since || null, sort: args.sort || 'last_active', account } }
+function xScope(args: any, account: string) { return { query: args.query || '', kind: args.kind || 'all', active_since: args.active_since || null, created_since: args.created_since || null, owner: args.owner || null, creator: args.creator || null, member: args.member || null, sort: args.sort || 'last_active', account } }
 
 async function scanTool(runtime: Runtime, tool: string, args: any, signal?: AbortSignal, present?: MessagePresentation, project?: MessageProjection): Promise<ToolData> {
   const conn = await runtime.ensureConnected(signal); const freshness = await runtime.getFreshness(signal); const version = versionKey(freshness)

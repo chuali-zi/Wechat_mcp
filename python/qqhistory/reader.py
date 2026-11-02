@@ -264,6 +264,30 @@ def contact_names(config):
     return names
 
 
+def group_metadata(config):
+    """Only use self-describing columns; opaque numeric fields are version-dependent."""
+    result = {}
+    if not (config['db_dir'] / 'group_info.db').is_file():
+        return result
+    try:
+        with capture(config, 'group_info.db') as (db, _, _):
+            for table in ('group_list', 'group_detail_info_ver1'):
+                cols = {r[1] for r in db.execute(f'PRAGMA table_info("{table}")')}
+                key = next((c for c in ('60001', 'group_id', 'group_code') if c in cols), None)
+                choices = {'member_count': ('member_count', 'member_num'), 'owner': ('owner_id', 'owner_uin', 'group_owner'), 'created_at': ('create_time', 'created_at')}
+                selected = {k: next((c for c in v if c in cols), None) for k, v in choices.items()}
+                selected = {k: v for k, v in selected.items() if v}
+                if not key or not selected:
+                    continue
+                columns = [key, *selected.values()]
+                for row in db.execute('SELECT ' + ','.join('"' + c + '"' for c in columns) + ' FROM "' + table + '"'):
+                    ident = chat_id(str(config['uin']), 'group', str(row[0]))
+                    result.setdefault(ident, {}).update({k: v for k, v in zip(selected, row[1:]) if v is not None})
+    except Exception:
+        pass
+    return result
+
+
 def query(db, config, action, args):
     union = message_union(db)
     uin = str(config['uin'])
@@ -275,6 +299,9 @@ def query(db, config, action, args):
         rows = db.execute(f'''SELECT kind, peer, MAX(timestamp) last_active, MIN(timestamp) first_seen, COUNT(*) message_count
             FROM ({union}) GROUP BY kind, peer ORDER BY last_active DESC, kind, peer''')
         names = contact_names(config)
+        metadata = group_metadata(config)
+        if args.get('member') or args.get('creator'):
+            raise QQError('QQ_OPTION_UNSUPPORTED')
         chats = []
         unidentified = 0
         for kind, peer, last, first, count in rows:
@@ -290,12 +317,18 @@ def query(db, config, action, args):
                 continue
             if last < args.get('_active_since', 0):
                 continue
-            if first < args.get('_created_since', 0):
+            meta = metadata.get(identity, {})
+            owner = str(meta.get('owner') or '')
+            if args.get('owner') and args['owner'].casefold() not in (owner + ' qq:' + uin + ':person:' + owner).casefold():
+                continue
+            created = meta.get('created_at')
+            created = created if isinstance(created, (int, float)) and 0 < created < 1e11 else 0
+            if (created or first) < args.get('_created_since', 0):
                 continue
             chats.append({'id': identity, 'name': name, 'kind': kind, 'last_active': last, 'first_seen': first,
-                          'message_count': count, 'name_source': 'contact_or_configured' if identity in names else 'id'})
+                          'member_count': meta.get('member_count'), 'owner_id': f'qq:{uin}:person:{owner}' if owner else None, 'created_at': created, 'created_source': 'group_info.create_time' if created else None, 'created_confidence': 'database' if created else None, 'message_count': count, 'name_source': 'contact_or_configured' if identity in names else 'id'})
         if args.get('sort') == 'created_at':
-            chats.sort(key=lambda c: (-c['first_seen'], c['id']))
+            chats.sort(key=lambda c: (-(c['created_at'] or c['first_seen']), c['id']))
         offset = args.get('_offset', 0)
         limit = args.get('limit', 20)
         return {'chats': chats[offset:offset + limit], 'has_more': len(chats) > offset + limit,

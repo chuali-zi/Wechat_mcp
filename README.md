@@ -170,4 +170,4 @@ See [media research, design, limitations and Windows verification](docs/wechat-m
 
 在源码目录运行 `weflow-mcp.cmd --ensure`。它在构建产物缺失时运行 `npm run build:mcp`，检查本机 Python、微信和 QQ 的只读连接，并以 JSON 输出状态；不自动获取密钥，也不修改客户端配置。客户端断开后须由客户端重新连接，然后调用 `get_status`。需要准备账号时按现有 WeFlow prepare 流程操作。`--ensure` 检查独立临时连接，不会创建常驻服务。
 
-`find_chats` / `qq_find_chats` 返回 `last_active_at` 和 `first_seen_at`；后者为本机可见最早消息，来源是 `earliest_local_message`，不能证明实际创建时间、创建者或成员身份。`created_at` 未知时为 null；`sort: "created_at"` 和 `created_since` 目前按首次本地消息近似，历史缺失会影响结果。先列出群并选择 ID，再用 `search_messages` 的 `chat_ids` 搜索；每次最多五个。
+`find_chats` 支持 `owner`、`creator` 和 `member`（人名或 person ID）、`query`、`created_since` 组合查找群。群主不一定是创建者；群成员和群主取自本地资料，可能不完整。`created_at` 返回数据库或明确创建系统消息的来源及置信度；`first_seen_at` 仅为本机最早消息，不能证明创建时间。未知创建时间时，`created_since` 和 `sort: "created_at"` 回退至首次本地消息。QQ 仅在可识别的 group_info 字段存在时提供元数据；QQ 成员和创建者筛选不受支持。

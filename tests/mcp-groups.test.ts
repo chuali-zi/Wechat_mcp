@@ -90,3 +90,33 @@ test('chat time sorting, filtering and cursor retain observed provenance', async
   const filtered = await findChats(r, { created_since: new Date(120000).toISOString() })
   assert.equal((filtered.data.chats as any[]).length, 1)
 })
+
+test('group metadata, person filters and explicit creation evidence', async () => {
+  clearCursors()
+  const r = runtime()
+  r.call = async (method: string, payload?: any) => {
+    if (method === 'getContactsCompact') return { contacts: [
+      { username: 'a@chatroom', nick_name: 'topic' }, { username: 'b@chatroom', nick_name: 'topic' },
+      { username: 'wxid_quiet', nick_name: 'Alice', local_type: 1 },
+    ] } as any
+    if (method === 'getSessions') return { sessions: [
+      { username: 'a@chatroom', first_timestamp: 100, last_timestamp: 300 },
+      { username: 'b@chatroom', first_timestamp: 200, last_timestamp: 300 },
+    ] } as any
+    if (method === 'getGroupMemberCounts') return { success: true, map: { 'a@chatroom': 3, 'b@chatroom': 2 } } as any
+    if (method === 'execQuery') return { success: true, rows: [{ username: 'a@chatroom', room_owner: 'wxid_quiet', create_time: 250 }] } as any
+    if (method === 'getGroupMembers') return { success: true, members: payload.chatroomId === 'a@chatroom' ? [{ username: 'wxid_quiet' }] : [] } as any
+    if (method === 'openMessageCursor') return { success: true, cursor: 42 } as any
+    if (method === 'fetchMessageBatch') return { success: true, rows: [{ local_id: 1, server_id: '1', local_type: 10000, create_time: 220, message_content: '你创建了群聊' }] } as any
+    if (method === 'closeMessageCursor') return { success: true } as any
+    throw new Error('unexpected method')
+  }
+  const all = (await findChats(r, { kind: 'group', sort: 'created_at' })).data.chats as any[]
+  assert.equal(all[0].created_at, new Date(250000).toISOString())
+  assert.equal(all[0].owner_id, personId(scope, 'wxid_quiet'))
+  assert.equal(all[0].member_count, 3)
+  assert.equal(all[1].created_source, 'system_message_creation')
+  assert.equal(all[1].created_by, personId(scope, 'wxid_me'))
+  assert.equal(((await findChats(r, { owner: 'Alice', member: personId(scope, 'wxid_quiet') })).data.chats as any[]).length, 1)
+  assert.equal(((await findChats(r, { creator: personId(scope, 'wxid_me'), created_since: new Date(210000).toISOString() })).data.chats as any[]).length, 1)
+})
