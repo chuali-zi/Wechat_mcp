@@ -2,7 +2,7 @@ import { liveTimeoutMs } from '../shared/liveTimeout'
 import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { homedir } from 'node:os'
-import { LocalBackendClient } from '../electron/services/localBackendClient'
+import { LocalBackendClient } from './lib/localBackendClient'
 import { isProfileLocked } from '../shared/profileLock'
 import { accountScope, personId } from '../shared/chat/ids'
 

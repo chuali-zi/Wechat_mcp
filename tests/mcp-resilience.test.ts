@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { once } from 'node:events'
-import { LocalBackendClient } from '../electron/services/localBackendClient'
+import { LocalBackendClient } from '../mcp/lib/localBackendClient'
 import { McpRuntime } from '../mcp/runtime'
 
 const root = resolve('.runtime/mcp-resilience')

@@ -12,12 +12,12 @@ export function isHeic(data: Buffer): boolean {
   return false
 }
 
-// HEIC decoding is CPU intensive; keep it outside Electron's main thread.
+// HEIC decoding is CPU intensive; keep it outside the server thread.
 export function heicToJpeg(data: Buffer, options: { workerPath?: string; signal?: AbortSignal } = {}): Promise<Buffer> {
   const workerPath = [options.workerPath, process.env.WEFLOW_MCP_ASSETS ? join(process.env.WEFLOW_MCP_ASSETS, 'heicDecodeWorker.cjs') : undefined,
-    join(__dirname, 'heicDecodeWorker.js'), join(__dirname, '../dist-electron/heicDecodeWorker.js')]
+    join(__dirname, 'heicDecodeWorker.cjs')]
     .find((path): path is string => typeof path === 'string' && existsSync(path))
-  if (!workerPath) return Promise.reject(new Error('HEIC 图片转换组件缺失，请重新安装应用。'))
+  if (!workerPath) return Promise.reject(new Error('HEIC 图片转换组件缺失，请重新构建 MCP。'))
   return new Promise((resolve, reject) => {
     const worker = new Worker(workerPath, { workerData: data })
     let settled = false

@@ -9,7 +9,7 @@ import { mapRowsToMessagesLite } from '../shared/chat/decode'
 import { normalizeMessage } from '../shared/chat/normalize'
 import { decryptDatV3, decryptDatV4, datVersion } from '../shared/chat/imageDecrypt'
 import { wxgfToJpeg } from './wxgf'
-import { heicToJpeg, isHeic } from '../electron/services/heicDecoder'
+import { heicToJpeg, isHeic } from './lib/heicDecoder'
 
 type Locator = ReturnType<typeof decodeMessageId>
 type Runtime = {

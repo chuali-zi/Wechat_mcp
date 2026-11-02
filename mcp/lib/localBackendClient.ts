@@ -51,7 +51,7 @@ export class LocalBackendClient {
       backendRoot && join(backendRoot, '../.venv/bin/python')]
     const interpreter = pythonCandidates.find((candidate) => candidate && existsSync(candidate))
     if (!frozen && (!backendRoot || !interpreter)) {
-      throw Object.assign(new Error('内置后端尚未安装。请使用项目根目录的“启动 WeFlow.cmd”准备运行环境。'), {
+      throw Object.assign(new Error('内置后端尚未安装。请安装项目 Python 环境并执行 npm run build:mcp。'), {
         code: 'BACKEND_UNAVAILABLE', retryable: false, action: '修复本机 Python / 后端运行环境后，在 MCP 客户端重新连接 WeFlow。',
       })
     }
